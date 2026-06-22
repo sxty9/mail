@@ -1,0 +1,57 @@
+{
+  "service": "mail",
+  "version": 1,
+  "categories": [
+    {
+      "id": "mailbox",
+      "label": "Mailbox",
+      "description": "Per-user access to one's own holistic mailbox.",
+      "permissions": [
+        {
+          "id": "read",
+          "label": "Use mail",
+          "description": "Read and manage your own mailbox: folders, read state, move and delete.",
+          "group": "hp_mail_read",
+          "default": true
+        },
+        {
+          "id": "send",
+          "label": "Send mail",
+          "description": "Compose and send messages from your address.",
+          "group": "hp_mail_send",
+          "default": true
+        }
+      ]
+    },
+    {
+      "id": "admin",
+      "label": "Administration",
+      "description": "Cross-mailbox and domain administration.",
+      "permissions": [
+        {
+          "id": "admin",
+          "label": "Administer mail",
+          "description": "Manage other users' mailboxes, domains and quotas.",
+          "group": "hp_mail_admin",
+          "default": false,
+          "dangerous": true
+        }
+      ]
+    },
+    {
+      "id": "audit",
+      "label": "Audit",
+      "description": "Read mail delivery logs and audit trails.",
+      "permissions": [
+        {
+          "id": "audit",
+          "label": "Read mail audit",
+          "description": "View delivery logs and audit trails across the instance.",
+          "group": "hp_mail_audit",
+          "default": false,
+          "sensitive": true
+        }
+      ]
+    }
+  ]
+}
