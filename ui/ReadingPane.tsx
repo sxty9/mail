@@ -108,15 +108,10 @@ export function ReadingPane({
     downloadAttachment(api, attUrl(index, false), name).catch((e) => ui.toast({ title: 'Download failed', description: (e as Error).message, variant: 'error' }));
   }
 
-  // Open an attachment in the shared SDK FilePreview (image/pdf/audio/video inline via the
-  // authenticated url; text fetched as a payload); types with no safe inline viewer just download.
-  async function openAttachment(a: AttachmentView) {
+  // loadPreview shows attachment[a.index] in the shared SDK FilePreview: text fetched as a payload,
+  // image/pdf/audio/video via an authenticated inline url, anything else as the download fallback.
+  async function loadPreview(a: AttachmentView) {
     const entry = attachmentEntry(a);
-    const name = entry.name;
-    if (!entry.viewer) {
-      saveAttachment(a.index, name);
-      return;
-    }
     if (entry.viewer === 'text' || entry.viewer === 'markdown') {
       try {
         const res = await api.raw(attUrl(a.index, false));
@@ -128,12 +123,26 @@ export function ReadingPane({
           truncated = true;
         }
         setPreview({ entry, index: a.index, text: { content, truncated } });
-      } catch (e) {
-        ui.toast({ title: 'Could not open attachment', description: (e as Error).message, variant: 'error' });
+      } catch {
+        setPreview({ entry, index: a.index, text: null });
       }
       return;
     }
-    setPreview({ entry, index: a.index, rawUrl: api.url(attUrl(a.index, true)) });
+    if (entry.viewer) {
+      setPreview({ entry, index: a.index, rawUrl: api.url(attUrl(a.index, true)) });
+      return;
+    }
+    setPreview({ entry, index: a.index });
+  }
+
+  // A chip click previews viewable types and downloads the rest; prev/next inside the viewer cycles
+  // through every attachment (non-viewable ones show the viewer's download fallback).
+  function openAttachment(a: AttachmentView) {
+    if (attachmentEntry(a).viewer) {
+      void loadPreview(a);
+    } else {
+      saveAttachment(a.index, a.filename || `attachment-${a.index}`);
+    }
   }
 
   const moveTargets: MenuItem[] = folders
@@ -275,6 +284,8 @@ export function ReadingPane({
         text={preview?.text ?? null}
         onOpenChange={(o) => !o && setPreview(null)}
         onDownload={(e) => preview && saveAttachment(preview.index, e.name)}
+        onPrev={preview && preview.index > 0 ? () => loadPreview(msg.attachments[preview.index - 1]) : undefined}
+        onNext={preview && preview.index < msg.attachments.length - 1 ? () => loadPreview(msg.attachments[preview.index + 1]) : undefined}
       />
     </Stack>
   );
