@@ -7,6 +7,7 @@ import {
   FileIcon,
   IconButton,
   Input,
+  MaximizeIcon,
   RichTextEditor,
   SendIcon,
   Stack,
@@ -45,6 +46,8 @@ export function Composer({
   onClose,
   onSent,
   onDirtyChange,
+  onExpand,
+  expanded,
   className,
 }: {
   api: ServiceApiClient;
@@ -54,6 +57,8 @@ export function Composer({
   onClose: () => void;
   onSent: () => void;
   onDirtyChange?: (dirty: boolean) => void;
+  onExpand?: () => void;
+  expanded?: boolean;
   className?: string;
 }) {
   const [from, setFrom] = useState(state.from || addresses[0] || '');
@@ -118,9 +123,16 @@ export function Composer({
         <Text variant="headline" weight="semibold" truncate>
           {subject.trim() || 'New message'}
         </Text>
-        <IconButton label="Close" variant="ghost" size="sm" onClick={discard}>
-          <XIcon className="h-4 w-4" />
-        </IconButton>
+        <Stack direction="row" align="center" gap={1} className="shrink-0">
+          {onExpand && (
+            <IconButton label={expanded ? 'Shrink' : 'Open in a larger window'} variant="ghost" size="sm" onClick={onExpand}>
+              <MaximizeIcon className="h-4 w-4" />
+            </IconButton>
+          )}
+          <IconButton label="Close" variant="ghost" size="sm" onClick={discard}>
+            <XIcon className="h-4 w-4" />
+          </IconButton>
+        </Stack>
       </Stack>
 
       <Stack gap={2} className="shrink-0 border-b border-separator px-4 py-3">

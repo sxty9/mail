@@ -49,6 +49,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const [adminOpen, setAdminOpen] = useState(false);
   const [composeSeq, setComposeSeq] = useState(0);
   const [composeDirty, setComposeDirty] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const info = useLiveInfo(api, canRead);
   const boxes = useBoxes(api, canRead);
@@ -197,7 +198,13 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
           )}
         </Box>
 
-        <Box className="min-w-0 flex-1 overflow-hidden">
+        <Box
+          className={`flex flex-col overflow-hidden ${
+            expanded
+              ? 'fixed inset-x-[5%] inset-y-[5%] z-50 rounded-2xl border border-separator bg-surface-raised shadow-elev-3'
+              : 'min-w-0 flex-1'
+          }`}
+        >
           {view.kind === 'compose' ? (
             <Composer
               key={view.seq}
@@ -206,12 +213,16 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               state={view.state}
               addresses={addresses}
               onDirtyChange={setComposeDirty}
+              onExpand={() => setExpanded((v) => !v)}
+              expanded={expanded}
               onClose={() => {
                 setComposeDirty(false);
+                setExpanded(false);
                 setView({ kind: 'read' });
               }}
               onSent={() => {
                 setComposeDirty(false);
+                setExpanded(false);
                 setView({ kind: 'read' });
                 refreshAll();
               }}
@@ -226,10 +237,14 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               onChanged={refreshAll}
               onReply={canSend ? startReply : undefined}
               onForward={canSend ? startForward : undefined}
+              onExpand={openId ? () => setExpanded((v) => !v) : undefined}
+              expanded={expanded}
             />
           )}
         </Box>
       </Box>
+
+      {expanded && <Box className="fixed inset-0 z-40 bg-black/60" onClick={() => setExpanded(false)} />}
 
       {appsOpen && <AppPasswordsModal api={api} ui={ui} instance={instance} onClose={() => setAppsOpen(false)} />}
       {adminOpen && <AdminPanel api={api} ui={ui} onClose={() => setAdminOpen(false)} />}

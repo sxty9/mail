@@ -11,6 +11,7 @@ import {
   IconButton,
   InlineLink,
   MailIcon,
+  MaximizeIcon,
   MoveIcon,
   ReplyIcon,
   SafeHtmlEmail,
@@ -37,6 +38,8 @@ export function ReadingPane({
   onChanged,
   onReply,
   onForward,
+  onExpand,
+  expanded,
   className,
 }: {
   api: ServiceApiClient;
@@ -47,6 +50,8 @@ export function ReadingPane({
   onChanged: () => void;
   onReply?: (m: MessageFull) => void;
   onForward?: (m: MessageFull) => void;
+  onExpand?: () => void;
+  expanded?: boolean;
   className?: string;
 }) {
   const [msg, setMsg] = useState<MessageFull | null>(null);
@@ -158,9 +163,16 @@ export function ReadingPane({
   return (
     <Stack gap={0} className={`flex h-full min-h-0 flex-col ${className ?? ''}`}>
       <Stack gap={3} className="shrink-0 border-b border-separator px-5 py-4">
-        <Text variant="title3" weight="semibold">
-          {msg.subject || '(no subject)'}
-        </Text>
+        <Stack direction="row" align="start" justify="between" gap={2}>
+          <Text variant="title3" weight="semibold" className="min-w-0">
+            {msg.subject || '(no subject)'}
+          </Text>
+          {onExpand && (
+            <IconButton label={expanded ? 'Shrink' : 'Open in a larger window'} variant="ghost" size="sm" onClick={onExpand} className="shrink-0">
+              <MaximizeIcon className="h-4 w-4" />
+            </IconButton>
+          )}
+        </Stack>
         <Stack direction="row" align="center" gap={3} justify="between" wrap>
           <Stack direction="row" align="center" gap={3} className="min-w-0">
             <Avatar name={displayName(msg.from)} size={40} />
