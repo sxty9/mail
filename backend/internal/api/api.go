@@ -96,6 +96,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Sending, gated by hp_mail_send.
 	mux.HandleFunc("POST "+base+"send", s.guard(rights.GroupSend, true, s.send))
+	// Drafts: save (compose right) and discard (own mailbox).
+	mux.HandleFunc("POST "+base+"drafts/save", s.guard(rights.GroupSend, true, s.draftSave))
+	mux.HandleFunc("POST "+base+"drafts/delete", s.guard(rights.GroupRead, true, s.draftDelete))
 
 	// Administration of domains + aliases (provisioning only — never reads a mailbox), gated by
 	// hp_mail_admin. This right is orthogonal to hp_mail_read: an admin manages addressing, not
@@ -312,6 +315,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request, u *auth.User) {
 		"from":        p.From,
 		"to":          p.To,
 		"cc":          p.Cc,
+		"bcc":         p.Bcc,
 		"subject":     p.Subject,
 		"date":        rfc3339(p.Date),
 		"messageId":   p.MessageID,
@@ -382,12 +386,14 @@ type sendReq struct {
 	From        string          `json:"from"` // optional send-as address; must be one the user owns
 	To          []string        `json:"to"`
 	Cc          []string        `json:"cc"`
+	Bcc         []string        `json:"bcc"` // blind copies — delivered but never written to headers
 	Subject     string          `json:"subject"`
 	Body        string          `json:"body"`
 	HTMLBody    string          `json:"htmlBody"` // optional rich-text HTML (sanitised in message.Build)
 	InReplyTo   string          `json:"inReplyTo"`
 	References  []string        `json:"references"`
 	Attachments []attachmentIn  `json:"attachments"`
+	ReplaceID   string          `json:"replaceId"` // drafts/save only: previous draft id to remove
 }
 
 func (s *Server) send(w http.ResponseWriter, r *http.Request, u *auth.User) {
@@ -396,7 +402,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, u *auth.User) {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	if len(cleanAddrs(req.To))+len(cleanAddrs(req.Cc)) == 0 {
+	if len(cleanAddrs(req.To))+len(cleanAddrs(req.Cc))+len(cleanAddrs(req.Bcc)) == 0 {
 		writeErr(w, http.StatusBadRequest, "At least one recipient is required")
 		return
 	}
@@ -417,6 +423,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, u *auth.User) {
 		FromAddr:    from,
 		To:          cleanAddrs(req.To),
 		Cc:          cleanAddrs(req.Cc),
+		Bcc:         cleanAddrs(req.Bcc),
 		Subject:     req.Subject,
 		Body:        req.Body,
 		HTMLBody:    req.HTMLBody,
@@ -429,6 +436,70 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, u *auth.User) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// draftSave builds the compose payload exactly like send, but stores it in Drafts only (no
+// delivery). replaceId, when set, is the previous draft version to remove.
+func (s *Server) draftSave(w http.ResponseWriter, r *http.Request, u *auth.User) {
+	var req sendReq
+	if !decodeBody(w, r, maxComposeBytes, &req) {
+		writeErr(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	from := strings.TrimSpace(req.From)
+	if from != "" && !s.reg.Owns(u.Username, from) {
+		writeErr(w, http.StatusForbidden, "You may not send from that address")
+		return
+	}
+	atts, err := decodeAttachments(req.Attachments)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "Invalid attachment data")
+		return
+	}
+	replace := ""
+	if req.ReplaceID != "" {
+		if id, ok := decodeID(req.ReplaceID); ok {
+			replace = id
+		}
+	}
+	id, err := s.lda.SaveDraft(lda.SendInput{
+		FromUser:    u.Username,
+		FromAddr:    from,
+		To:          cleanAddrs(req.To),
+		Cc:          cleanAddrs(req.Cc),
+		Bcc:         cleanAddrs(req.Bcc),
+		Subject:     req.Subject,
+		Body:        req.Body,
+		HTMLBody:    req.HTMLBody,
+		InReplyTo:   strings.TrimSpace(req.InReplyTo),
+		References:  req.References,
+		Attachments: atts,
+	}, replace)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Could not save draft")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": encodeID(id)})
+}
+
+func (s *Server) draftDelete(w http.ResponseWriter, r *http.Request, u *auth.User) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if !decodeBody(w, r, 4096, &req) {
+		writeErr(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	id, ok := decodeID(req.ID)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "Invalid draft id")
+		return
+	}
+	if err := s.store.Remove(u.Username, "Drafts", id); err != nil {
+		writeErr(w, http.StatusNotFound, "Draft not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 type flagsReq struct {

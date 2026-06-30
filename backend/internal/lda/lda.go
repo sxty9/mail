@@ -38,6 +38,7 @@ type SendInput struct {
 	FromAddr    string // optional send-as address; must be one the user owns (else ignored)
 	To          []string
 	Cc          []string
+	Bcc         []string // blind copies: delivered/queued but never written into the headers
 	Subject     string
 	Body        string
 	HTMLBody    string // optional rich-text HTML body (sanitised in message.Build)
@@ -96,7 +97,10 @@ func (d *Deliverer) Send(in SendInput) (SendResult, error) {
 	var localUsers []string
 	var external []string
 	seenLocal := map[string]bool{}
-	for _, addr := range append(append([]string{}, in.To...), in.Cc...) {
+	// Bcc recipients are delivered/queued alongside To+Cc but were deliberately NOT passed to
+	// message.Build, so they never appear in the headers — that is the whole point of a blind copy.
+	allRcpts := append(append(append([]string{}, in.To...), in.Cc...), in.Bcc...)
+	for _, addr := range allRcpts {
 		if u, ok := d.localUser(addr); ok {
 			if !seenLocal[u] { // one copy per mailbox even if addressed via several aliases
 				seenLocal[u] = true
@@ -123,6 +127,42 @@ func (d *Deliverer) Send(in SendInput) (SendResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// SaveDraft builds the message exactly as Send would (including a Bcc header so blind copies are
+// remembered) but stores it ONLY in the user's Drafts folder — nothing is delivered or queued. If
+// replaceID is set, the previous draft version is removed afterwards, so editing a draft does not
+// pile up copies. Returns the new draft's id.
+func (d *Deliverer) SaveDraft(in SendInput, replaceID string) (string, error) {
+	from := d.reg.DefaultAddress(in.FromUser)
+	if in.FromAddr != "" {
+		if !d.reg.Owns(in.FromUser, in.FromAddr) {
+			return "", errors.New("send-as address not owned by user")
+		}
+		from = strings.ToLower(strings.TrimSpace(in.FromAddr))
+	}
+	raw, _ := message.Build(message.BuildOptions{
+		From:        from,
+		FromName:    d.prof.Load(in.FromUser).DisplayName(),
+		To:          in.To,
+		Cc:          in.Cc,
+		Bcc:         in.Bcc,
+		Subject:     in.Subject,
+		Body:        in.Body,
+		HTMLBody:    in.HTMLBody,
+		InReplyTo:   in.InReplyTo,
+		References:  in.References,
+		Domain:      domainOf(from),
+		Attachments: in.Attachments,
+	})
+	id, err := d.store.Deliver(in.FromUser, "Drafts", raw, true)
+	if err != nil {
+		return "", err
+	}
+	if replaceID != "" {
+		_ = d.store.Remove(in.FromUser, "Drafts", replaceID)
+	}
+	return id, nil
 }
 
 // DeliverInbound writes an inbound internet message (already raw RFC 5322, handed in by the

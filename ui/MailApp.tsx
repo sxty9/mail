@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Avatar,
   Box,
@@ -18,11 +18,11 @@ import {
   type ServiceContextProps,
 } from '@holistic/ui';
 import type { Info, MailboxesResp, MessageFull, MessageMeta, MessagesResp } from './types';
-import { forwardDefaults, replyDefaults } from './helpers';
+import { bareAddress, forwardDefaults, replyDefaults } from './helpers';
 import { FolderSidebar } from './FolderSidebar';
 import { MessageList } from './MessageList';
 import { ReadingPane } from './ReadingPane';
-import { Composer, type ComposeState } from './Composer';
+import { Composer, type ComposeState, type ComposerHandle } from './Composer';
 import { AdminPanel } from './AdminPanel';
 import { AppPasswordsModal } from './AppPasswordsModal';
 
@@ -50,6 +50,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const [composeSeq, setComposeSeq] = useState(0);
   const [composeDirty, setComposeDirty] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const composerRef = useRef<ComposerHandle>(null);
 
   const info = useLiveInfo(api, canRead);
   const boxes = useBoxes(api, canRead);
@@ -72,26 +73,33 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const rows = q ? messages.filter((m) => `${m.subject} ${m.from} ${m.to}`.toLowerCase().includes(q)) : messages;
   const showRecipient = folder === 'Sent' || folder === 'Drafts';
 
-  // guardLeave confirms before abandoning an unsaved compose draft (the inline composer occupies
-  // the same pane used for reading, so opening a message or another compose would replace it).
-  async function guardLeave(): Promise<boolean> {
-    if (view.kind !== 'compose' || !composeDirty) return true;
-    return ui.confirm({ title: 'Discard this message?', description: 'Your draft will be lost.', danger: true, confirmLabel: 'Discard' });
+  // leaveCompose auto-saves an unsaved compose to Drafts before the inline composer is replaced, so
+  // the user never loses work and is never forced to discard or send (the Discard button is the
+  // explicit way to throw a message away).
+  async function leaveCompose() {
+    if (view.kind === 'compose' && composeDirty) {
+      await composerRef.current?.saveDraft();
+      refreshAll();
+    }
+    setComposeDirty(false);
   }
 
   async function selectFolder(f: string) {
-    if (!(await guardLeave())) return;
+    await leaveCompose();
     setFolder(f);
     setOpenId(null);
     setView({ kind: 'read' });
-    setComposeDirty(false);
   }
 
   async function openMessage(m: MessageMeta) {
-    if (!(await guardLeave())) return;
+    await leaveCompose();
+    // Opening a draft resumes editing it in the composer rather than just reading it.
+    if (folder === 'Drafts') {
+      void openDraft(m.id);
+      return;
+    }
     setOpenId(m.id);
     setView({ kind: 'read' });
-    setComposeDirty(false);
     if (!m.seen) {
       try {
         await api.post('flags', { mailbox: folder, id: m.id, seen: true });
@@ -103,6 +111,30 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
     }
   }
 
+  async function openDraft(id: string) {
+    try {
+      const full = await api.get<MessageFull>(`message?mailbox=Drafts&id=${encodeURIComponent(id)}`);
+      const fromAddr = bareAddress(full.from);
+      if (full.attachments.length) {
+        ui.toast({ title: 'Note: draft attachments are not re-attached when editing' });
+      }
+      startCompose({
+        from: addresses.includes(fromAddr) ? fromAddr : addresses[0],
+        to: full.to,
+        cc: full.cc,
+        bcc: full.bcc,
+        subject: full.subject,
+        html: full.html,
+        text: full.text,
+        inReplyTo: full.inReplyTo,
+        references: full.references,
+        draftId: id,
+      });
+    } catch (e) {
+      ui.toast({ title: 'Could not open draft', description: (e as Error).message, variant: 'error' });
+    }
+  }
+
   function startCompose(state: ComposeState) {
     setComposeSeq((n) => n + 1);
     setComposeDirty(false);
@@ -110,12 +142,12 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   }
 
   async function compose(make: () => ComposeState) {
-    if (!(await guardLeave())) return;
+    await leaveCompose();
     startCompose(make());
   }
 
   function newMessage() {
-    compose(() => ({ from: addresses[0], to: '', cc: '', subject: '', html: '', text: '' }));
+    compose(() => ({ from: addresses[0], to: '', cc: '', bcc: '', subject: '', html: '', text: '' }));
   }
 
   function startReply(full: MessageFull) {
@@ -124,6 +156,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
       from: addresses[0],
       to: full.from,
       cc: '',
+      bcc: '',
       subject: /^re:/i.test(full.subject) ? full.subject : `Re: ${full.subject}`,
       html,
       text,
@@ -138,6 +171,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
       from: addresses[0],
       to: '',
       cc: '',
+      bcc: '',
       subject: /^fwd:/i.test(full.subject) ? full.subject : `Fwd: ${full.subject}`,
       html,
       text,
@@ -208,6 +242,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
           {view.kind === 'compose' ? (
             <Composer
               key={view.seq}
+              ref={composerRef}
               api={api}
               ui={ui}
               state={view.state}

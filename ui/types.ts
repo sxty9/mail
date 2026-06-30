@@ -53,6 +53,7 @@ export interface MessageFull {
   from: string;
   to: string;
   cc: string;
+  bcc: string;
   subject: string;
   date: string;
   messageId: string;

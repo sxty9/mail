@@ -36,6 +36,7 @@ type Headers struct {
 	From           string    `json:"from"`
 	To             string    `json:"to"`
 	Cc             string    `json:"cc"`
+	Bcc            string    `json:"bcc"`
 	Subject        string    `json:"subject"`
 	Date           time.Time `json:"date"`
 	MessageID      string    `json:"messageId"`
@@ -74,6 +75,7 @@ type BuildOptions struct {
 	FromName   string // optional display name → "FromName <From>"
 	To         []string
 	Cc         []string
+	Bcc        []string // written as a Bcc header ONLY for drafts; Send leaves this empty
 	Subject    string
 	Body       string // plain text (UTF-8)
 	HTMLBody   string // optional rich-text HTML body; when set, Build emits multipart/alternative
@@ -125,6 +127,7 @@ func Build(o BuildOptions) ([]byte, string) {
 	hdr("From", fromHeader)
 	hdr("To", strings.Join(o.To, ", "))
 	hdr("Cc", strings.Join(o.Cc, ", "))
+	hdr("Bcc", strings.Join(o.Bcc, ", "))
 	hdr("Subject", encodeWord(o.Subject))
 	hdr("Message-ID", msgID)
 	hdr("In-Reply-To", o.InReplyTo)
@@ -270,6 +273,7 @@ func headersOf(h mail.Header) Headers {
 		From:           decodeWord(dec, h.Get("From")),
 		To:             decodeWord(dec, h.Get("To")),
 		Cc:             decodeWord(dec, h.Get("Cc")),
+		Bcc:            decodeWord(dec, h.Get("Bcc")),
 		Subject:        decodeWord(dec, h.Get("Subject")),
 		MessageID:      strings.TrimSpace(h.Get("Message-ID")),
 		InReplyTo:      strings.TrimSpace(h.Get("In-Reply-To")),

@@ -638,6 +638,18 @@ func (s *Store) Delete(user, folder, id string) error {
 	return s.Move(user, folder, "Trash", id)
 }
 
+// Remove permanently deletes a message from a folder (no Trash detour). Used for drafts: replacing
+// a draft with a newer version, or clearing it once the message is sent or discarded.
+func (s *Store) Remove(user, folder, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path, _, ok := find(folderDir(s.userRoot(user), folder), id)
+	if !ok {
+		return os.ErrNotExist
+	}
+	return os.Remove(path)
+}
+
 // Folders returns the standard mailboxes followed by the user's custom folders, each with its
 // counts. Standard folders keep their fixed canonical order; custom ones follow the user's
 // persisted display order (newly-discovered ones, with no stored position, sort alphabetically
