@@ -393,7 +393,42 @@ type sendReq struct {
 	InReplyTo   string          `json:"inReplyTo"`
 	References  []string        `json:"references"`
 	Attachments []attachmentIn  `json:"attachments"`
-	ReplaceID   string          `json:"replaceId"` // drafts/save only: previous draft id to remove
+	ReplaceID   string          `json:"replaceId"`     // drafts/save only: previous draft id to remove
+	KeepFromDraft *keepRef      `json:"keepFromDraft"` // carry existing attachments over from a draft
+}
+
+// keepRef references attachments that already live in a draft message, so editing/sending a draft
+// carries them along without the client re-uploading the bytes.
+type keepRef struct {
+	ID      string `json:"id"`
+	Indices []int  `json:"indices"`
+}
+
+// keptAttachments extracts the referenced attachments from a draft message (by parsed index) so
+// they can be re-embedded into the new send/draft.
+func (s *Server) keptAttachments(user string, k *keepRef) []message.Attachment {
+	if k == nil || strings.TrimSpace(k.ID) == "" || len(k.Indices) == 0 {
+		return nil
+	}
+	id, ok := decodeID(k.ID)
+	if !ok {
+		return nil
+	}
+	raw, err := s.store.ReadRaw(user, "Drafts", id)
+	if err != nil {
+		return nil
+	}
+	p, err := message.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	var out []message.Attachment
+	for _, idx := range k.Indices {
+		if idx >= 0 && idx < len(p.Attachments) {
+			out = append(out, p.Attachments[idx])
+		}
+	}
+	return out
 }
 
 func (s *Server) send(w http.ResponseWriter, r *http.Request, u *auth.User) {
@@ -418,6 +453,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, u *auth.User) {
 		writeErr(w, http.StatusBadRequest, "Invalid attachment data")
 		return
 	}
+	atts = append(atts, s.keptAttachments(u.Username, req.KeepFromDraft)...)
 	res, err := s.lda.Send(lda.SendInput{
 		FromUser:    u.Username,
 		FromAddr:    from,
@@ -456,6 +492,8 @@ func (s *Server) draftSave(w http.ResponseWriter, r *http.Request, u *auth.User)
 		writeErr(w, http.StatusBadRequest, "Invalid attachment data")
 		return
 	}
+	// Extract carried-over attachments BEFORE the old draft is removed by SaveDraft(replace).
+	atts = append(atts, s.keptAttachments(u.Username, req.KeepFromDraft)...)
 	replace := ""
 	if req.ReplaceID != "" {
 		if id, ok := decodeID(req.ReplaceID); ok {
@@ -479,7 +517,13 @@ func (s *Server) draftSave(w http.ResponseWriter, r *http.Request, u *auth.User)
 		writeErr(w, http.StatusInternalServerError, "Could not save draft")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": encodeID(id)})
+	// Return the saved draft's attachment views (Build preserves the atts order) so the composer can
+	// re-reference them on the next save without re-uploading bytes.
+	views := make([]attachmentView, len(atts))
+	for i, a := range atts {
+		views[i] = attachmentView{Index: i, Filename: a.Filename, ContentType: a.ContentType, Size: a.Size, Inline: a.Inline, ContentID: a.ContentID}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": encodeID(id), "attachments": views})
 }
 
 func (s *Server) draftDelete(w http.ResponseWriter, r *http.Request, u *auth.User) {

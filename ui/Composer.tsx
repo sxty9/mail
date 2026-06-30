@@ -18,7 +18,7 @@ import {
   type ServiceApiClient,
   type ServiceUiBridge,
 } from '@holistic/ui';
-import type { SendResult } from './types';
+import type { AttachmentView, SendResult } from './types';
 import { fileToBase64, formatSize, splitAddrs } from './helpers';
 
 export interface ComposeState {
@@ -33,6 +33,8 @@ export interface ComposeState {
   references?: string[];
   /** Set when editing an existing draft, so saving replaces it and sending removes it. */
   draftId?: string;
+  /** Attachments already stored in the draft, carried over by reference (no re-upload). */
+  keepAttachments?: AttachmentView[];
 }
 
 /** Imperative surface so the host can auto-save the draft when the user navigates away. */
@@ -73,11 +75,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [html, setHtml] = useState(state.html);
   const [text, setText] = useState(state.text);
   const [files, setFiles] = useState<File[]>([]);
+  const [kept, setKept] = useState<AttachmentView[]>(state.keepAttachments ?? []);
   const [busy, setBusy] = useState(false);
   const draftIdRef = useRef<string | null>(state.draftId ?? null);
 
   // Report whether there's content worth keeping, so the host knows to auto-save on navigation.
-  const dirty = !!(to.trim() || cc.trim() || bcc.trim() || subject.trim() || text.trim() || files.length);
+  const dirty = !!(to.trim() || cc.trim() || bcc.trim() || subject.trim() || text.trim() || files.length || kept.length);
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -95,6 +98,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       htmlBody: html,
       inReplyTo: state.inReplyTo,
       references: state.references,
+      keepFromDraft: kept.length && draftIdRef.current ? { id: draftIdRef.current, indices: kept.map((a) => a.index) } : undefined,
     };
   }
 
@@ -128,12 +132,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
     try {
       const attachments = await Promise.all(files.map((f) => fileToBase64(f)));
-      const res = await api.post<{ id: string }>('drafts/save', {
+      const res = await api.post<{ id: string; attachments: AttachmentView[] }>('drafts/save', {
         ...payload(),
         attachments,
         replaceId: draftIdRef.current || undefined,
       });
+      // The new draft now holds both the kept and the newly-uploaded attachments; re-reference them
+      // so a subsequent save doesn't re-upload (or drop) them.
       draftIdRef.current = res.id;
+      setKept(res.attachments ?? []);
+      setFiles([]);
       if (!silent) {
         ui.toast({ title: 'Draft saved' });
         onClose();
@@ -259,9 +267,36 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         />
       </Box>
 
-      {files.length > 0 && (
+      {(files.length > 0 || kept.length > 0) && (
         <Stack gap={2} className="max-h-28 shrink-0 overflow-auto border-t border-separator px-4 py-3">
           <Stack direction="row" gap={2} wrap>
+            {kept.map((a) => (
+              <Stack
+                key={`kept-${a.index}`}
+                direction="row"
+                align="center"
+                gap={2}
+                className="rounded-lg border border-separator px-3 py-1.5"
+              >
+                <FileIcon className="h-4 w-4 text-text-secondary" />
+                <Stack gap={0} className="min-w-0">
+                  <Text variant="footnote" truncate>
+                    {a.filename || `attachment-${a.index}`}
+                  </Text>
+                  <Text variant="caption" color="tertiary">
+                    {formatSize(a.size)}
+                  </Text>
+                </Stack>
+                <IconButton
+                  label="Remove attachment"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setKept((cur) => cur.filter((x) => x.index !== a.index))}
+                >
+                  <XIcon className="h-4 w-4" />
+                </IconButton>
+              </Stack>
+            ))}
             {files.map((f, i) => (
               <Stack
                 key={`${f.name}-${i}`}

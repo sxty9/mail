@@ -115,9 +115,6 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
     try {
       const full = await api.get<MessageFull>(`message?mailbox=Drafts&id=${encodeURIComponent(id)}`);
       const fromAddr = bareAddress(full.from);
-      if (full.attachments.length) {
-        ui.toast({ title: 'Note: draft attachments are not re-attached when editing' });
-      }
       startCompose({
         from: addresses.includes(fromAddr) ? fromAddr : addresses[0],
         to: full.to,
@@ -129,6 +126,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
         inReplyTo: full.inReplyTo,
         references: full.references,
         draftId: id,
+        keepAttachments: full.attachments,
       });
     } catch (e) {
       ui.toast({ title: 'Could not open draft', description: (e as Error).message, variant: 'error' });
