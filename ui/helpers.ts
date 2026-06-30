@@ -1,7 +1,7 @@
 // Pure helpers shared across the mail UI. No JSX here — only data/string utilities and the
 // binary-download flow (which goes through props.api.raw, never fetch).
-import type { ServiceApiClient } from '@holistic/ui';
-import type { MessageFull, OutAttachment } from './types';
+import type { FileEntry, ServiceApiClient, ViewerKind } from '@holistic/ui';
+import type { AttachmentView, MessageFull, OutAttachment } from './types';
 
 /** Friendly name from a "Name <addr>" or bare address. */
 export function displayName(addr: string): string {
@@ -138,6 +138,29 @@ export function fileToBase64(file: File): Promise<OutAttachment> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+/**
+ * viewerFor maps a MIME type to the SDK FilePreview viewer that can render it inline, or undefined
+ * for types that must be downloaded. SVG/HTML are intentionally not inline-previewable (script risk;
+ * the backend also refuses to serve them inline).
+ */
+export function viewerFor(mime: string): ViewerKind | undefined {
+  const m = (mime || '').toLowerCase().split(';')[0].trim();
+  if (m === 'image/svg+xml') return undefined;
+  if (m.startsWith('image/')) return 'image';
+  if (m === 'application/pdf') return 'pdf';
+  if (m.startsWith('audio/')) return 'audio';
+  if (m.startsWith('video/')) return 'video';
+  if (m === 'text/markdown') return 'markdown';
+  if (m === 'text/plain') return 'text';
+  return undefined;
+}
+
+/** Build a synthetic SDK FileEntry for a mail attachment so the shared FilePreview can render it. */
+export function attachmentEntry(a: AttachmentView): FileEntry {
+  const name = a.filename || `attachment-${a.index}`;
+  return { name, path: name, kind: 'file', size: a.size, mtime: 0, mime: a.contentType, viewer: viewerFor(a.contentType) ?? null };
 }
 
 /** Fetch an attachment via the authenticated api.raw channel and save it to disk. */

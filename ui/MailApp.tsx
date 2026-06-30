@@ -1,13 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   Avatar,
-  Badge,
   Box,
   Button,
-  Column,
-  DataTable,
   EmptyState,
-  FileIcon,
   GlobeIcon,
   KeyIcon,
   MailIcon,
@@ -22,8 +18,9 @@ import {
   type ServiceContextProps,
 } from '@holistic/ui';
 import type { Info, MailboxesResp, MessageFull, MessageMeta, MessagesResp } from './types';
-import { displayName, folderLabel, forwardDefaults, formatWhen, replyDefaults } from './helpers';
+import { forwardDefaults, replyDefaults } from './helpers';
 import { FolderSidebar } from './FolderSidebar';
+import { MessageList } from './MessageList';
 import { ReadingPane } from './ReadingPane';
 import { Composer, type ComposeState } from './Composer';
 import { AdminPanel } from './AdminPanel';
@@ -73,40 +70,6 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const q = search.trim().toLowerCase();
   const rows = q ? messages.filter((m) => `${m.subject} ${m.from} ${m.to}`.toLowerCase().includes(q)) : messages;
   const showRecipient = folder === 'Sent' || folder === 'Drafts';
-
-  const columns: Column<MessageMeta>[] = [
-    {
-      key: 'msg',
-      header: showRecipient ? 'Recipients' : 'Messages',
-      sortable: true,
-      sortValue: (m) => m.date,
-      render: (m) => {
-        const who = showRecipient ? m.to : m.from;
-        return (
-          <Stack gap={1} className="min-w-0">
-            <Stack direction="row" align="center" justify="between" gap={2}>
-              <Stack direction="row" align="center" gap={2} className="min-w-0">
-                <Avatar name={displayName(who)} size={24} />
-                <Text truncate weight={m.seen ? 'normal' : 'semibold'}>
-                  {displayName(who)}
-                </Text>
-              </Stack>
-              <Text variant="caption" color="tertiary" className="shrink-0">
-                {formatWhen(m.date)}
-              </Text>
-            </Stack>
-            <Stack direction="row" align="center" gap={1} className="min-w-0">
-              {m.flagged && <Badge variant="warning">flagged</Badge>}
-              {m.hasAttachments && <FileIcon className="h-3 w-3 shrink-0 text-text-tertiary" />}
-              <Text truncate variant="footnote" weight={m.seen ? 'normal' : 'semibold'} color={m.seen ? 'secondary' : 'primary'}>
-                {m.subject || '(no subject)'}
-              </Text>
-            </Stack>
-          </Stack>
-        );
-      },
-    },
-  ];
 
   // guardLeave confirms before abandoning an unsaved compose draft (the inline composer occupies
   // the same pane used for reading, so opening a message or another compose would replace it).
@@ -230,20 +193,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               <Spinner />
             </Stack>
           ) : (
-            <DataTable<MessageMeta>
-              columns={columns}
-              rows={rows}
-              rowKey={(m) => m.id}
-              onRowClick={openMessage}
-              initialSort={{ key: 'msg', dir: 'desc' }}
-              emptyState={
-                <EmptyState
-                  icon={<MailIcon />}
-                  title="No messages"
-                  description={q ? 'Nothing matches your search.' : `${folderLabel(folder)} is empty.`}
-                />
-              }
-            />
+            <MessageList messages={rows} activeId={openId} showRecipient={showRecipient} query={q} onOpen={openMessage} />
           )}
         </Box>
 

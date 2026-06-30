@@ -7,6 +7,7 @@ import {
   DropdownMenu,
   EmptyState,
   FileIcon,
+  FilePreview,
   IconButton,
   InlineLink,
   MailIcon,
@@ -18,12 +19,14 @@ import {
   Stack,
   Text,
   TrashIcon,
+  type FileEntry,
   type MenuItem,
   type ServiceApiClient,
   type ServiceUiBridge,
+  type TextPayload,
 } from '@holistic/ui';
-import type { FolderInfo, MessageFull } from './types';
-import { displayName, downloadAttachment, folderLabel, formatFull, formatSize } from './helpers';
+import type { AttachmentView, FolderInfo, MessageFull } from './types';
+import { attachmentEntry, displayName, downloadAttachment, folderLabel, formatFull, formatSize } from './helpers';
 
 export function ReadingPane({
   api,
@@ -49,9 +52,11 @@ export function ReadingPane({
   const [msg, setMsg] = useState<MessageFull | null>(null);
   const [loading, setLoading] = useState(false);
   const [plain, setPlain] = useState(false);
+  const [preview, setPreview] = useState<{ entry: FileEntry; index: number; rawUrl?: string; text?: TextPayload | null } | null>(null);
 
   useEffect(() => {
     setPlain(false);
+    setPreview(null);
     if (!id) {
       setMsg(null);
       return;
@@ -92,6 +97,43 @@ export function ReadingPane({
     } catch (e) {
       ui.toast({ title: 'Action failed', description: (e as Error).message, variant: 'error' });
     }
+  }
+
+  function attUrl(index: number, inline: boolean): string {
+    const base = `attachment?mailbox=${encodeURIComponent(folder)}&id=${encodeURIComponent(msg?.id ?? '')}&index=${index}`;
+    return inline ? `${base}&inline=1` : base;
+  }
+
+  function saveAttachment(index: number, name: string) {
+    downloadAttachment(api, attUrl(index, false), name).catch((e) => ui.toast({ title: 'Download failed', description: (e as Error).message, variant: 'error' }));
+  }
+
+  // Open an attachment in the shared SDK FilePreview (image/pdf/audio/video inline via the
+  // authenticated url; text fetched as a payload); types with no safe inline viewer just download.
+  async function openAttachment(a: AttachmentView) {
+    const entry = attachmentEntry(a);
+    const name = entry.name;
+    if (!entry.viewer) {
+      saveAttachment(a.index, name);
+      return;
+    }
+    if (entry.viewer === 'text' || entry.viewer === 'markdown') {
+      try {
+        const res = await api.raw(attUrl(a.index, false));
+        if (!res.ok) throw new Error(`download failed (${res.status})`);
+        let content = await res.text();
+        let truncated = false;
+        if (content.length > 200_000) {
+          content = content.slice(0, 200_000);
+          truncated = true;
+        }
+        setPreview({ entry, index: a.index, text: { content, truncated } });
+      } catch (e) {
+        ui.toast({ title: 'Could not open attachment', description: (e as Error).message, variant: 'error' });
+      }
+      return;
+    }
+    setPreview({ entry, index: a.index, rawUrl: api.url(attUrl(a.index, true)) });
   }
 
   const moveTargets: MenuItem[] = folders
@@ -173,12 +215,18 @@ export function ReadingPane({
             </Text>
             <Stack direction="row" gap={2} wrap>
               {msg.attachments.map((a) => (
-                <Stack
+                <Box
                   key={a.index}
-                  direction="row"
-                  align="center"
-                  gap={2}
-                  className="rounded-lg border border-separator px-3 py-2"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openAttachment(a)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openAttachment(a);
+                    }
+                  }}
+                  className="flex cursor-pointer items-center gap-2 rounded-lg border border-separator px-3 py-2 transition-colors hover:bg-fill/5"
                 >
                   <FileIcon className="h-4 w-4 text-text-secondary" />
                   <Stack gap={0} className="min-w-0">
@@ -193,17 +241,14 @@ export function ReadingPane({
                     label="Download"
                     size="sm"
                     variant="ghost"
-                    onClick={() =>
-                      downloadAttachment(
-                        api,
-                        `attachment?mailbox=${encodeURIComponent(folder)}&id=${encodeURIComponent(msg.id)}&index=${a.index}`,
-                        a.filename || `attachment-${a.index}`,
-                      ).catch((e) => ui.toast({ title: 'Download failed', description: (e as Error).message, variant: 'error' }))
-                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      saveAttachment(a.index, a.filename || `attachment-${a.index}`);
+                    }}
                   >
                     <DownloadIcon className="h-4 w-4" />
                   </IconButton>
-                </Stack>
+                </Box>
               ))}
             </Stack>
           </Stack>
@@ -222,6 +267,15 @@ export function ReadingPane({
           <Text className="whitespace-pre-wrap">{msg.text || '(empty message)'}</Text>
         )}
       </Box>
+
+      <FilePreview
+        open={!!preview}
+        entry={preview?.entry ?? null}
+        rawUrl={preview?.rawUrl}
+        text={preview?.text ?? null}
+        onOpenChange={(o) => !o && setPreview(null)}
+        onDownload={(e) => preview && saveAttachment(preview.index, e.name)}
+      />
     </Stack>
   );
 }

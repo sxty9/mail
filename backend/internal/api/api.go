@@ -359,8 +359,15 @@ func (s *Server) attachment(w http.ResponseWriter, r *http.Request, u *auth.User
 	w.Header().Set("Content-Length", strconv.Itoa(len(a.Data)))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// Always force a download (never let the browser render an attachment inline).
-	w.Header().Set("Content-Disposition", formatAttachmentDisposition(a.Filename, idx))
+	// Inline display is opt-in (?inline=1) AND only for types that cannot execute script in our
+	// origin — images (not SVG), PDF, audio/video, plain text. Everything else is force-downloaded.
+	// A CSP sandbox hardens the one case (PDF via <object>) that becomes a nested browsing context.
+	if r.URL.Query().Get("inline") == "1" && inlineSafe(ct) {
+		w.Header().Set("Content-Disposition", "inline")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; media-src 'self' data:; object-src 'self'; style-src 'unsafe-inline'; sandbox")
+	} else {
+		w.Header().Set("Content-Disposition", formatAttachmentDisposition(a.Filename, idx))
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(a.Data)
 }
@@ -1002,6 +1009,29 @@ func formatAttachmentDisposition(filename string, idx int) string {
 		return v
 	}
 	return "attachment"
+}
+
+// inlineSafe reports whether a content type may be served inline (rendered in the browser) without
+// risking script execution in our origin. SVG and HTML/XML are deliberately excluded — they can
+// carry script — so they are always force-downloaded.
+func inlineSafe(ct string) bool {
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	switch {
+	case ct == "image/svg+xml":
+		return false
+	case strings.HasPrefix(ct, "image/"):
+		return true
+	case ct == "application/pdf":
+		return true
+	case strings.HasPrefix(ct, "audio/"), strings.HasPrefix(ct, "video/"):
+		return true
+	case ct == "text/plain":
+		return true
+	}
+	return false
 }
 
 // sanitizeFilename strips control bytes and path separators so a crafted attachment name can
