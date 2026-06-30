@@ -64,6 +64,9 @@ export function FolderSidebar({
   const [name, setName] = useState('');
 
   const customNames = folders.filter((f) => f.custom).map((f) => f.name);
+  // The header "+" nests under the selected folder when that folder is a user folder; for a
+  // standard folder (Inbox/Sent/…) — which can't hold subfolders — it creates a top-level folder.
+  const activeIsCustom = folders.some((f) => f.name === active && f.custom);
 
   async function submitCreate() {
     const leaf = name.trim();
@@ -195,11 +198,11 @@ export function FolderSidebar({
           Folders
         </Text>
         <IconButton
-          label="New folder"
+          label={activeIsCustom ? `New subfolder in “${folderLeaf(active)}”` : 'New folder'}
           size="sm"
           variant="ghost"
           onClick={() => {
-            setCreatingUnder(null);
+            setCreatingUnder(activeIsCustom ? active : null);
             setName('');
           }}
         >
