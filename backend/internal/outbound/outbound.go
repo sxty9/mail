@@ -18,6 +18,12 @@ import (
 	"time"
 )
 
+// maxAttempts caps outbound delivery retries. After this many consecutive failures a job is
+// dead-lettered (moved to a "failed" subdir) instead of being retried forever — the backstop
+// against an infinite re-delivery loop (e.g. a slow edge that relays successfully but times out
+// our client, so every retry re-delivers the same mail).
+const maxAttempts = 5
+
 // Queue is a disk-backed outbound spool with a background flush loop.
 type Queue struct {
 	dir     string
@@ -44,8 +50,11 @@ func New(dir, edgeURL, secret string) *Queue {
 		dir:     dir,
 		edgeURL: edgeURL,
 		secret:  secret,
-		client:  &http.Client{Timeout: 30 * time.Second},
-		kick:    make(chan struct{}, 1),
+		// Generous timeout: the edge relays the full message to the smarthost before responding, and
+		// a large message (big attachments) can take well over 30s. A timeout that fires while the
+		// edge has ALREADY relayed causes the job to be retried and re-delivered — duplicate mail.
+		client: &http.Client{Timeout: 5 * time.Minute},
+		kick:   make(chan struct{}, 1),
 	}
 }
 
@@ -137,19 +146,47 @@ func (q *Queue) deliver(ctx context.Context, id string) error {
 	req.Header.Set("X-Mail-From", job.From)
 	req.Header.Set("X-Mail-Rcpt", strings.Join(job.To, ","))
 	resp, err := q.client.Do(req)
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode/100 == 2 {
+			_ = os.Remove(rawPath)
+			_ = os.Remove(metaPath)
+			return nil
+		}
+	}
+	// Failure — a transport error (incl. timeout) OR a non-2xx status. Count the attempt and persist
+	// it; after maxAttempts, dead-letter the job instead of retrying forever. Counting on the
+	// transport-error path too is the crucial fix: previously a timeout returned without bumping
+	// Attempts, so the job retried (and re-delivered) endlessly.
+	job.Attempts++
+	if job.Attempts >= maxAttempts {
+		q.deadLetter(id, metaPath, rawPath, job)
+		if err != nil {
+			return fmt.Errorf("gave up after %d attempts: %w", job.Attempts, err)
+		}
+		return fmt.Errorf("gave up after %d attempts: edge returned %d", job.Attempts, resp.StatusCode)
+	}
+	nb, _ := json.MarshalIndent(job, "", "  ")
+	_ = writeFileAtomic(metaPath, nb)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		job.Attempts++
-		nb, _ := json.MarshalIndent(job, "", "  ")
-		_ = writeFileAtomic(metaPath, nb)
-		return fmt.Errorf("edge returned %d", resp.StatusCode)
+	return fmt.Errorf("edge returned %d", resp.StatusCode)
+}
+
+// deadLetter moves a permanently-failed job out of the active spool (into a "failed" subdir, which
+// flush ignores) so it stops being retried. The bytes are preserved for inspection rather than
+// silently dropped.
+func (q *Queue) deadLetter(id, metaPath, rawPath string, job Job) {
+	failedDir := filepath.Join(q.dir, "failed")
+	if err := os.MkdirAll(failedDir, 0o700); err == nil {
+		_ = os.Rename(rawPath, filepath.Join(failedDir, id+".eml"))
+		_ = os.Rename(metaPath, filepath.Join(failedDir, id+".json"))
+	} else {
+		_ = os.Remove(rawPath)
+		_ = os.Remove(metaPath)
 	}
-	_ = os.Remove(rawPath)
-	_ = os.Remove(metaPath)
-	return nil
+	log.Printf("maild: outbound %s DEAD-LETTERED after %d attempts (from=%s to=%v)", id, job.Attempts, job.From, job.To)
 }
 
 func uniqueID() string {
