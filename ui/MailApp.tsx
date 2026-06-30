@@ -3,22 +3,30 @@ import {
   Avatar,
   Box,
   Button,
+  CheckIcon,
+  DropdownMenu,
   EmptyState,
+  EyeOffIcon,
   GlobeIcon,
+  IconButton,
   KeyIcon,
   MailIcon,
+  MoveIcon,
   PencilIcon,
   SearchField,
   Spinner,
   Stack,
   Text,
+  TrashIcon,
+  XIcon,
   useLiveQuery,
   userHasRight,
+  type MenuItem,
   type ServiceApiClient,
   type ServiceContextProps,
 } from '@holistic/ui';
 import type { Info, MailboxesResp, MessageFull, MessageMeta, MessagesResp } from './types';
-import { bareAddress, forwardDefaults, replyDefaults } from './helpers';
+import { bareAddress, folderLabel, forwardDefaults, replyDefaults } from './helpers';
 import { FolderSidebar } from './FolderSidebar';
 import { MessageList } from './MessageList';
 import { ReadingPane } from './ReadingPane';
@@ -50,6 +58,8 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const [composeSeq, setComposeSeq] = useState(0);
   const [composeDirty, setComposeDirty] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [anchorId, setAnchorId] = useState<string | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
 
   const info = useLiveInfo(api, canRead);
@@ -89,10 +99,15 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
     setFolder(f);
     setOpenId(null);
     setView({ kind: 'read' });
+    setSelected(new Set());
+    setAnchorId(null);
   }
 
   async function openMessage(m: MessageMeta) {
     await leaveCompose();
+    // A plain click opens a single message and clears any multi-selection.
+    setSelected(new Set());
+    setAnchorId(m.id);
     // Opening a draft resumes editing it in the composer rather than just reading it.
     if (folder === 'Drafts') {
       void openDraft(m.id);
@@ -181,6 +196,63 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
     boxes?.refresh();
   }
 
+  // ── multi-select (Cmd/Ctrl-click toggles, Shift-click selects a range) ────────────────
+  function clearSelection() {
+    setSelected(new Set());
+  }
+
+  function toggleSelect(m: MessageMeta) {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(m.id)) next.delete(m.id);
+      else next.add(m.id);
+      return next;
+    });
+    setAnchorId(m.id);
+  }
+
+  function rangeSelect(m: MessageMeta) {
+    const ids = rows.map((x) => x.id);
+    const b = ids.indexOf(m.id);
+    const a = anchorId ? ids.indexOf(anchorId) : -1;
+    if (a < 0 || b < 0) {
+      toggleSelect(m);
+      return;
+    }
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    const span = ids.slice(lo, hi + 1);
+    setSelected((cur) => {
+      const next = new Set(cur);
+      span.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  async function bulkEach(fn: (id: string) => Promise<void>) {
+    const ids = [...selected];
+    for (const id of ids) {
+      try {
+        await fn(id);
+      } catch {
+        /* keep going; a per-item failure shouldn't abort the batch */
+      }
+    }
+    if (openId && selected.has(openId)) {
+      setOpenId(null);
+      setView({ kind: 'read' });
+    }
+    clearSelection();
+    refreshAll();
+  }
+
+  const bulkMark = (seen: boolean) => bulkEach((id) => api.post('flags', { mailbox: folder, id, seen }).then(() => undefined));
+  const bulkDelete = () => bulkEach((id) => api.post('delete', { mailbox: folder, id }).then(() => undefined));
+  const bulkMove = (to: string) => bulkEach((id) => api.post('move', { mailbox: folder, id, to }).then(() => undefined));
+
+  const bulkMoveTargets: MenuItem[] = folders
+    .filter((f) => f.name !== folder)
+    .map((f) => ({ id: f.name, label: folderLabel(f.name), onSelect: () => bulkMove(f.name) }));
+
   return (
     <Box className="flex h-full min-h-0 flex-col gap-3 px-6 py-5">
       <Stack direction="row" align="center" justify="between" gap={3} wrap className="shrink-0">
@@ -220,14 +292,57 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
           />
         </Box>
 
-        <Box className="w-[340px] shrink-0 overflow-auto border-r border-separator">
-          {list?.loading && !list?.data ? (
-            <Stack align="center" className="py-16">
-              <Spinner />
+        <Box className="flex w-[340px] shrink-0 flex-col border-r border-separator">
+          {selected.size > 0 && (
+            <Stack direction="row" align="center" justify="between" gap={2} className="shrink-0 border-b border-separator bg-accent/10 px-3 py-2">
+              <Text variant="footnote" weight="medium">
+                {selected.size} selected
+              </Text>
+              <Stack direction="row" align="center" gap={1}>
+                <IconButton label="Mark read" size="sm" variant="ghost" onClick={() => bulkMark(true)}>
+                  <CheckIcon className="h-4 w-4" />
+                </IconButton>
+                <IconButton label="Mark unread" size="sm" variant="ghost" onClick={() => bulkMark(false)}>
+                  <EyeOffIcon className="h-4 w-4" />
+                </IconButton>
+                {bulkMoveTargets.length > 0 && (
+                  <DropdownMenu
+                    align="end"
+                    items={bulkMoveTargets}
+                    trigger={
+                      <IconButton label="Move to…" size="sm" variant="ghost">
+                        <MoveIcon className="h-4 w-4" />
+                      </IconButton>
+                    }
+                  />
+                )}
+                <IconButton label="Delete" size="sm" variant="ghost" onClick={bulkDelete}>
+                  <TrashIcon className="h-4 w-4" />
+                </IconButton>
+                <IconButton label="Clear selection" size="sm" variant="ghost" onClick={clearSelection}>
+                  <XIcon className="h-4 w-4" />
+                </IconButton>
+              </Stack>
             </Stack>
-          ) : (
-            <MessageList messages={rows} activeId={openId} showRecipient={showRecipient} query={q} onOpen={openMessage} />
           )}
+          <Box className="min-h-0 flex-1 overflow-auto">
+            {list?.loading && !list?.data ? (
+              <Stack align="center" className="py-16">
+                <Spinner />
+              </Stack>
+            ) : (
+              <MessageList
+                messages={rows}
+                activeId={openId}
+                selected={selected}
+                showRecipient={showRecipient}
+                query={q}
+                onOpen={openMessage}
+                onToggle={toggleSelect}
+                onRange={rangeSelect}
+              />
+            )}
+          </Box>
         </Box>
 
         <Box

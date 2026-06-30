@@ -4,21 +4,28 @@ import { displayName, formatWhen } from './helpers';
 
 /**
  * MessageList renders the mailbox as rounded, selectable rows (no full-width divider lines) — the
- * same visual language as the folder tree, so the whole shell reads as one consistent rounded
- * surface. The active row gets a tinted rounded highlight; unread rows show a dot + bolder sender.
+ * same visual language as the folder tree. A plain click opens a message; Cmd/Ctrl-click toggles it
+ * in a multi-selection; Shift-click selects a range. The open row is tinted; selected rows get a
+ * ring; unread rows show a dot + bolder sender.
  */
 export function MessageList({
   messages,
   activeId,
+  selected,
   showRecipient,
   query,
   onOpen,
+  onToggle,
+  onRange,
 }: {
   messages: MessageMeta[];
   activeId: string | null;
+  selected: Set<string>;
   showRecipient: boolean;
   query: string;
   onOpen: (m: MessageMeta) => void;
+  onToggle: (m: MessageMeta) => void;
+  onRange: (m: MessageMeta) => void;
 }) {
   if (!messages.length) {
     return (
@@ -35,21 +42,29 @@ export function MessageList({
     <Stack gap={0} className="p-1.5">
       {messages.map((m) => {
         const who = showRecipient ? m.to : m.from;
-        const selected = m.id === activeId;
+        const isOpen = m.id === activeId;
+        const isSelected = selected.has(m.id);
         return (
           <Box
             key={m.id}
             role="button"
             tabIndex={0}
-            aria-current={selected || undefined}
-            onClick={() => onOpen(m)}
+            aria-selected={isSelected || undefined}
+            aria-current={isOpen || undefined}
+            onClick={(e) => {
+              if (e.shiftKey) onRange(m);
+              else if (e.metaKey || e.ctrlKey) onToggle(m);
+              else onOpen(m);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 onOpen(m);
               }
             }}
-            className={`cursor-pointer rounded-lg px-3 py-2 transition-colors ${selected ? 'bg-accent/15' : 'hover:bg-fill/8'}`}
+            className={`cursor-pointer select-none rounded-lg px-3 py-2 transition-colors ${
+              isSelected ? 'bg-accent/20 ring-1 ring-inset ring-accent/40' : isOpen ? 'bg-accent/15' : 'hover:bg-fill/8'
+            }`}
           >
             <Stack direction="row" align="start" justify="between" gap={2} className="min-w-0">
               <Stack direction="row" align="center" gap={2} className="min-w-0">
