@@ -31,7 +31,7 @@
         {
           "id": "admin",
           "label": "Administer mail",
-          "description": "Manage other users' mailboxes, domains and quotas.",
+          "description": "Provision mail domains, addresses and aliases for users. Does not read mailbox contents.",
           "group": "hp_mail_admin",
           "default": false,
           "dangerous": true

@@ -26,6 +26,8 @@ import (
 	"mail/internal/lda"
 	"mail/internal/maildir"
 	"mail/internal/outbound"
+	"mail/internal/profile"
+	"mail/internal/registry"
 )
 
 func main() {
@@ -52,15 +54,22 @@ func main() {
 		readSecret("MAILD_EDGE_SECRET", "MAILD_EDGE_SECRET_FILE"),
 	)
 	inboundSecret := readSecret("MAILD_INBOUND_SECRET", "MAILD_INBOUND_SECRET_FILE")
+	// Optional icaly calendar integration. All empty by default → maild behaves unchanged.
+	// The internal-send and inbound-forward secrets are the same shared icaly↔maild secret.
+	internalSecret := readSecret("MAILD_INTERNAL_SECRET", "MAILD_INTERNAL_SECRET_FILE")
+	calURL := getenv("MAILD_CALENDAR_URL", "")
+	calSecret := readSecret("MAILD_CALENDAR_SECRET", "MAILD_CALENDAR_SECRET_FILE")
 	ap := apppass.New(filepath.Join(dataRoot, "apppasswords"))
-	del := lda.New(store, out, inst)
+	prof := profile.New()
+	reg := registry.New(filepath.Join(dataRoot, "registry"), inst)
+	del := lda.New(store, out, prof, reg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go out.Run(ctx)
 
 	srv := &http.Server{
-		Handler:           api.New(v, store, inst, del, ap, inboundSecret).Handler(),
+		Handler:           api.New(v, store, inst, reg, del, ap, inboundSecret, internalSecret, calURL, calSecret).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -139,8 +139,8 @@ func (s *Server) mailboxGet(user string, args map[string]any) map[string]any {
 		}
 		list = append(list, map[string]any{
 			"id":            f.Name,
-			"name":          f.Name,
-			"parentId":      nil,
+			"name":          jmapLeaf(f.Name),
+			"parentId":      jmapParent(f.Name),
 			"role":          folderRoles[f.Name],
 			"sortOrder":     i,
 			"totalEmails":   f.Total,
@@ -158,8 +158,13 @@ func (s *Server) mailboxGet(user string, args map[string]any) map[string]any {
 }
 
 func (s *Server) mailboxQuery(user string) map[string]any {
-	ids := make([]string, 0, len(maildir.StdFolders))
-	ids = append(ids, maildir.StdFolders...)
+	// Mirror Mailbox/get: enumerate every folder the user has (standard + custom), not just the
+	// static standard set, so a native client sees and syncs custom folders consistently.
+	folders, _ := s.store.Folders(user)
+	ids := make([]string, 0, len(folders))
+	for _, f := range folders {
+		ids = append(ids, f.Name)
+	}
 	return map[string]any{
 		"accountId": user, "queryState": "0", "canCalculateChanges": false,
 		"position": 0, "total": len(ids), "ids": ids,
@@ -215,7 +220,8 @@ func (s *Server) emailSet(user string, args map[string]any) map[string]any {
 		for eid, p := range upd {
 			patch, _ := p.(map[string]any)
 			if err := s.applyPatch(user, eid, patch); err != nil {
-				notUpdated[eid] = map[string]any{"type": "invalidProperties", "description": err.Error()}
+				// Never echo the raw store error (it can carry absolute server paths) to the client.
+				notUpdated[eid] = map[string]any{"type": "invalidProperties", "description": "Could not update message"}
 			} else {
 				updated[eid] = nil
 			}
@@ -279,7 +285,9 @@ func (s *Server) applyPatch(user, eid string, patch map[string]any) error {
 				dest = id
 			}
 		}
-		if dest != "" && dest != folder && maildir.ValidFolder(dest) {
+		// Require the destination to already exist (HasFolder), matching the REST move handler —
+		// a JMAP move must never conjure a new folder into being.
+		if dest != "" && dest != folder && s.store.HasFolder(user, dest) {
 			if err := s.store.Move(user, folder, dest, mid); err != nil {
 				return err
 			}
@@ -369,6 +377,23 @@ func decodeID(eid string) (folder, mid string, ok bool) {
 		return "", "", false
 	}
 	return parts[0], parts[1], true
+}
+
+// jmapLeaf is a folder's display name: the last "/"-separated segment of the hierarchical wire name.
+func jmapLeaf(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// jmapParent is the parent mailbox id (the full wire name without the last segment), or nil for a
+// top-level mailbox — letting JMAP clients represent the folder tree the web UI shows.
+func jmapParent(name string) any {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[:i]
+	}
+	return nil
 }
 
 func idFilter(v any) map[string]bool {

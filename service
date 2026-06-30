@@ -118,6 +118,12 @@ Environment=$ADMIN_ENV=$SERVICE_ADMIN_GROUP
 Environment=MAILD_DATA=/var/lib/$SERVICE_ID
 # Inbound webhook secret, shared with the sxgate mail edge (absent until the edge is set up).
 Environment=MAILD_INBOUND_SECRET_FILE=/etc/holistic/mail-inbound-secret
+# Optional icaly calendar integration (iMIP). All keyed to the shared icaly↔maild secret, which
+# the icaly service provisions group-readable; absent until icaly is installed, in which case
+# maild behaves exactly as before. MAILD_CALENDAR_URL is icaly's inbound iMIP webhook.
+Environment=MAILD_INTERNAL_SECRET_FILE=/etc/holistic/icaly-mail-secret
+Environment=MAILD_CALENDAR_SECRET_FILE=/etc/holistic/icaly-mail-secret
+Environment=MAILD_CALENDAR_URL=http://127.0.0.1:8776/api/services/icaly/imip/inbound
 ExecStart=$DAEMON_BIN --listen 127.0.0.1:$SERVICE_PORT
 Restart=on-failure
 RestartSec=2
