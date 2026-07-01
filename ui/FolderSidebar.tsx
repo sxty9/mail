@@ -215,6 +215,12 @@ export function FolderSidebar({
       <TreeNav
         nodes={nodes}
         onSelect={onSelect}
+        onNodeDoubleClick={(id) => {
+          if (folders.some((f) => f.name === id && f.custom)) {
+            setRenaming(id);
+            setName(folderLeaf(id));
+          }
+        }}
         onMove={onMove}
         rowActions={rowActions}
         externalDropType="application/x-mail-ids"

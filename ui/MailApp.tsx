@@ -313,38 +313,40 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
         </Box>
 
         <Box className="flex w-[340px] shrink-0 flex-col border-r border-separator">
-          {selected.size > 0 && (
-            <Stack direction="row" align="center" justify="between" gap={2} className="shrink-0 border-b border-separator bg-accent/10 px-3 py-2">
-              <Text variant="footnote" weight="medium">
-                {selected.size} selected
-              </Text>
-              <Stack direction="row" align="center" gap={1}>
-                <IconButton label="Mark read" size="sm" variant="ghost" onClick={() => bulkMark(true)}>
-                  <CheckIcon className="h-4 w-4" />
-                </IconButton>
-                <IconButton label="Mark unread" size="sm" variant="ghost" onClick={() => bulkMark(false)}>
-                  <EyeOffIcon className="h-4 w-4" />
-                </IconButton>
-                {bulkMoveTargets.length > 0 && (
-                  <DropdownMenu
-                    align="end"
-                    items={bulkMoveTargets}
-                    trigger={
-                      <IconButton label="Move to…" size="sm" variant="ghost">
-                        <MoveIcon className="h-4 w-4" />
-                      </IconButton>
-                    }
-                  />
-                )}
-                <IconButton label="Delete" size="sm" variant="ghost" onClick={bulkDelete}>
-                  <TrashIcon className="h-4 w-4" />
-                </IconButton>
-                <IconButton label="Clear selection" size="sm" variant="ghost" onClick={clearSelection}>
-                  <XIcon className="h-4 w-4" />
-                </IconButton>
-              </Stack>
+          <Stack
+            direction="row"
+            align="center"
+            justify="between"
+            gap={2}
+            className={`shrink-0 border-b border-separator px-3 py-2 ${selected.size > 0 ? 'bg-accent/10' : ''}`}
+          >
+            <Text variant="footnote" weight="medium" color={selected.size > 0 ? 'primary' : 'tertiary'}>
+              {selected.size} selected
+            </Text>
+            <Stack direction="row" align="center" gap={1}>
+              <IconButton label="Mark read" size="sm" variant="ghost" disabled={!selected.size} onClick={() => bulkMark(true)}>
+                <CheckIcon className="h-4 w-4" />
+              </IconButton>
+              <IconButton label="Mark unread" size="sm" variant="ghost" disabled={!selected.size} onClick={() => bulkMark(false)}>
+                <EyeOffIcon className="h-4 w-4" />
+              </IconButton>
+              <DropdownMenu
+                align="end"
+                items={bulkMoveTargets}
+                trigger={
+                  <IconButton label="Move to…" size="sm" variant="ghost" disabled={!selected.size || bulkMoveTargets.length === 0}>
+                    <MoveIcon className="h-4 w-4" />
+                  </IconButton>
+                }
+              />
+              <IconButton label="Delete" size="sm" variant="ghost" disabled={!selected.size} onClick={bulkDelete}>
+                <TrashIcon className="h-4 w-4" />
+              </IconButton>
+              <IconButton label="Clear selection" size="sm" variant="ghost" disabled={!selected.size} onClick={clearSelection}>
+                <XIcon className="h-4 w-4" />
+              </IconButton>
             </Stack>
-          )}
+          </Stack>
           <Box className="min-h-0 flex-1 overflow-auto">
             {list?.loading && !list?.data ? (
               <Stack align="center" className="py-16">
