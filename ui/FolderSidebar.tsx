@@ -48,6 +48,7 @@ export function FolderSidebar({
   active,
   onSelect,
   onChanged,
+  onDropMessages,
   className,
 }: {
   api: ServiceApiClient;
@@ -56,6 +57,7 @@ export function FolderSidebar({
   active: string;
   onSelect: (name: string) => void;
   onChanged: () => void;
+  onDropMessages?: (folder: string, ids: string[]) => void;
   className?: string;
 }) {
   // creatingUnder: undefined = closed, null = new root folder, string = new subfolder of that parent.
@@ -210,7 +212,23 @@ export function FolderSidebar({
         </IconButton>
       </Stack>
 
-      <TreeNav nodes={nodes} onSelect={onSelect} onMove={onMove} rowActions={rowActions} />
+      <TreeNav
+        nodes={nodes}
+        onSelect={onSelect}
+        onMove={onMove}
+        rowActions={rowActions}
+        externalDropType="application/x-mail-ids"
+        onExternalDrop={(targetId, dt) => {
+          const raw = dt.getData('application/x-mail-ids');
+          if (!raw) return;
+          try {
+            const ids = JSON.parse(raw);
+            if (Array.isArray(ids) && ids.length) onDropMessages?.(targetId, ids);
+          } catch {
+            /* ignore malformed payload */
+          }
+        }}
+      />
 
       <Modal
         open={creatingUnder !== undefined}

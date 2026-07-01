@@ -253,6 +253,25 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
     .filter((f) => f.name !== folder)
     .map((f) => ({ id: f.name, label: folderLabel(f.name), onSelect: () => bulkMove(f.name) }));
 
+  // Drag-and-drop: messages dragged from the list onto a folder are moved there.
+  async function moveMessagesTo(target: string, ids: string[]) {
+    if (target === folder || !ids.length) return;
+    for (const id of ids) {
+      try {
+        await api.post('move', { mailbox: folder, id, to: target });
+      } catch {
+        /* keep going */
+      }
+    }
+    if (openId && ids.includes(openId)) {
+      setOpenId(null);
+      setView({ kind: 'read' });
+    }
+    clearSelection();
+    refreshAll();
+    ui.toast({ title: `Moved to ${folderLabel(target)}` });
+  }
+
   return (
     <Box className="flex h-full min-h-0 flex-col gap-3 px-6 py-5">
       <Stack direction="row" align="center" justify="between" gap={3} wrap className="shrink-0">
@@ -289,6 +308,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
             active={folder}
             onSelect={selectFolder}
             onChanged={() => boxes?.refresh()}
+            onDropMessages={moveMessagesTo}
           />
         </Box>
 

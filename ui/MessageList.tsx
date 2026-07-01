@@ -1,4 +1,4 @@
-import { Avatar, Badge, Box, EmptyState, FileIcon, MailIcon, Stack, Text } from '@holistic/ui';
+import { Avatar, Badge, Box, Checkbox, EmptyState, FileIcon, MailIcon, Stack, Text } from '@holistic/ui';
 import type { MessageMeta } from './types';
 import { displayName, formatWhen } from './helpers';
 
@@ -38,6 +38,7 @@ export function MessageList({
       </Stack>
     );
   }
+  const selectionActive = selected.size > 0;
   return (
     <Stack gap={0} className="p-1.5">
       {messages.map((m) => {
@@ -49,8 +50,18 @@ export function MessageList({
             key={m.id}
             role="button"
             tabIndex={0}
+            draggable
             aria-selected={isSelected || undefined}
             aria-current={isOpen || undefined}
+            onDragStart={(e) => {
+              const ids = isSelected && selectionActive ? [...selected] : [m.id];
+              try {
+                e.dataTransfer.setData('application/x-mail-ids', JSON.stringify(ids));
+                e.dataTransfer.effectAllowed = 'move';
+              } catch {
+                /* some browsers restrict setData */
+              }
+            }}
             onClick={(e) => {
               if (e.shiftKey) onRange(m);
               else if (e.metaKey || e.ctrlKey) onToggle(m);
@@ -62,13 +73,29 @@ export function MessageList({
                 onOpen(m);
               }
             }}
-            className={`cursor-pointer select-none rounded-lg px-3 py-2 transition-colors ${
+            className={`group flex cursor-pointer select-none flex-col rounded-lg px-3 py-2 transition-colors ${
               isSelected ? 'bg-accent/20 ring-1 ring-inset ring-accent/40' : isOpen ? 'bg-accent/15' : 'hover:bg-fill/8'
             }`}
           >
             <Stack direction="row" align="start" justify="between" gap={2} className="min-w-0">
               <Stack direction="row" align="center" gap={2} className="min-w-0">
-                <Avatar name={displayName(who)} size={30} />
+                {/* Avatar swaps to a selection checkbox on hover / when a selection is active. */}
+                <Box className="relative h-[30px] w-[30px] shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Box
+                    className={`absolute inset-0 transition-opacity ${
+                      isSelected || selectionActive ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'
+                    }`}
+                  >
+                    <Avatar name={displayName(who)} size={30} />
+                  </Box>
+                  <Box
+                    className={`absolute inset-0 flex items-center justify-center transition-opacity ${
+                      isSelected || selectionActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    }`}
+                  >
+                    <Checkbox checked={isSelected} onChange={() => onToggle(m)} />
+                  </Box>
+                </Box>
                 <Stack gap={0} className="min-w-0">
                   <Stack direction="row" align="center" gap={2} className="min-w-0">
                     {!m.seen && <Box className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
