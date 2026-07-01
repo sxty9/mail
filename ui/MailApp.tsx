@@ -105,14 +105,16 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
 
   async function openMessage(m: MessageMeta) {
     await leaveCompose();
-    // A plain click opens a single message and clears any multi-selection.
-    setSelected(new Set());
     setAnchorId(m.id);
     // Opening a draft resumes editing it in the composer rather than just reading it.
     if (folder === 'Drafts') {
+      setSelected(new Set());
       void openDraft(m.id);
       return;
     }
+    // A plain click opens a message AND makes it the selection — so the highlighted row and the
+    // "N selected" count always agree (no more "0 selected" while a row is highlighted).
+    setSelected(new Set([m.id]));
     setOpenId(m.id);
     setView({ kind: 'read' });
     if (!m.seen) {
@@ -323,31 +325,44 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
             <Text variant="footnote" weight="medium" color={selected.size > 0 ? 'primary' : 'tertiary'}>
               {selected.size} selected
             </Text>
-            <Stack direction="row" align="center" gap={1}>
-              <IconButton label="Mark read" size="sm" variant="ghost" disabled={!selected.size} onClick={() => bulkMark(true)}>
-                <CheckIcon className="h-4 w-4" />
-              </IconButton>
-              <IconButton label="Mark unread" size="sm" variant="ghost" disabled={!selected.size} onClick={() => bulkMark(false)}>
-                <EyeOffIcon className="h-4 w-4" />
-              </IconButton>
-              <DropdownMenu
-                align="end"
-                items={bulkMoveTargets}
-                trigger={
-                  <IconButton label="Move to…" size="sm" variant="ghost" disabled={!selected.size || bulkMoveTargets.length === 0}>
-                    <MoveIcon className="h-4 w-4" />
-                  </IconButton>
-                }
-              />
-              <IconButton label="Delete" size="sm" variant="ghost" disabled={!selected.size} onClick={bulkDelete}>
-                <TrashIcon className="h-4 w-4" />
-              </IconButton>
-              <IconButton label="Clear selection" size="sm" variant="ghost" disabled={!selected.size} onClick={clearSelection}>
-                <XIcon className="h-4 w-4" />
-              </IconButton>
-            </Stack>
+            {selected.size > 0 && (
+              <Stack direction="row" align="center" gap={1}>
+                <IconButton label="Mark read" size="sm" variant="ghost" onClick={() => bulkMark(true)}>
+                  <CheckIcon className="h-4 w-4" />
+                </IconButton>
+                <IconButton label="Mark unread" size="sm" variant="ghost" onClick={() => bulkMark(false)}>
+                  <EyeOffIcon className="h-4 w-4" />
+                </IconButton>
+                {bulkMoveTargets.length > 0 && (
+                  <DropdownMenu
+                    align="end"
+                    items={bulkMoveTargets}
+                    trigger={
+                      <IconButton label="Move to…" size="sm" variant="ghost">
+                        <MoveIcon className="h-4 w-4" />
+                      </IconButton>
+                    }
+                  />
+                )}
+                <IconButton label="Delete" size="sm" variant="ghost" onClick={bulkDelete}>
+                  <TrashIcon className="h-4 w-4" />
+                </IconButton>
+                <IconButton label="Clear selection" size="sm" variant="ghost" onClick={clearSelection}>
+                  <XIcon className="h-4 w-4" />
+                </IconButton>
+              </Stack>
+            )}
           </Stack>
-          <Box className="min-h-0 flex-1 overflow-auto">
+          <Box
+            className="min-h-0 flex-1 overflow-auto"
+            onClick={(e) => {
+              // Clicking the empty area (not a row) deselects everything.
+              if (e.target === e.currentTarget) {
+                setSelected(new Set());
+                setOpenId(null);
+              }
+            }}
+          >
             {list?.loading && !list?.data ? (
               <Stack align="center" className="py-16">
                 <Spinner />
