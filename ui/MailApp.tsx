@@ -105,6 +105,11 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const [composeSeq, setComposeSeq] = useState(0);
   const [composeDirty, setComposeDirty] = useState(false);
   const [expandPref, setExpandPref] = usePersistentExpand();
+  // Reading is the exception to the saved display mode: opening a message from the list must NEVER
+  // jump straight to full screen — that stays a manual, per-message choice. readerExpanded tracks
+  // only the currently-open message and is reset whenever the open message changes, so every new
+  // selection starts in the side view even when the saved preference is "maximized".
+  const [readerExpanded, setReaderExpanded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -112,6 +117,11 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const info = useLiveInfo(api, canRead);
   const boxes = useBoxes(api, canRead);
   const list = useList(api, folder, canRead);
+
+  // Selecting another message drops back to the side view (the reading full-screen never auto-applies).
+  useEffect(() => {
+    setReaderExpanded(false);
+  }, [openId]);
 
   if (!canRead) {
     return (
@@ -130,11 +140,17 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const rows = q ? messages.filter((m) => `${m.subject} ${m.from} ${m.to}`.toLowerCase().includes(q)) : messages;
   const showRecipient = folder === 'Sent' || folder === 'Drafts';
 
-  // The maximized overlay only makes sense when the right pane actually has something to show — a
-  // composer, or a message being read. This lets the preference persist across close/send without
-  // ever leaving a floating empty fullscreen box behind.
-  const hasRightContent = view.kind === 'compose' || openId != null;
-  const expanded = expandPref && hasRightContent;
+  // Compose auto-restores the saved display mode (Vollbild vs. side view); reading never does —
+  // it only follows the manual, per-message readerExpanded. Gating on actual content also keeps a
+  // close/send from leaving a floating empty full-screen box behind.
+  const expanded = view.kind === 'compose' ? expandPref : openId != null && readerExpanded;
+
+  // collapse shrinks whichever pane is maximized and records the side view as the saved preference
+  // (used by the dimmed backdrop click). Reading still writes the shared state, per "save it anyway".
+  const collapse = () => {
+    setReaderExpanded(false);
+    setExpandPref(false);
+  };
 
   // leaveCompose auto-saves an unsaved compose to Drafts before the inline composer is replaced, so
   // the user never loses work and is never forced to discard or send (the Discard button is the
@@ -473,14 +489,24 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               onChanged={refreshAll}
               onReply={canSend ? startReply : undefined}
               onForward={canSend ? startForward : undefined}
-              onExpand={openId ? () => setExpandPref((v) => !v) : undefined}
+              onExpand={
+                openId
+                  ? () => {
+                      // Manual per-message toggle: flip this reader AND save the mode so the next
+                      // compose remembers it — but a fresh selection still opens in the side view.
+                      const next = !readerExpanded;
+                      setReaderExpanded(next);
+                      setExpandPref(next);
+                    }
+                  : undefined
+              }
               expanded={expanded}
             />
           )}
         </Box>
       </Box>
 
-      {expanded && <Box className="fixed inset-0 z-40 bg-black/60" onClick={() => setExpandPref(false)} />}
+      {expanded && <Box className="fixed inset-0 z-40 bg-black/60" onClick={collapse} />}
 
       {appsOpen && <AppPasswordsModal api={api} ui={ui} instance={instance} onClose={() => setAppsOpen(false)} />}
       {adminOpen && <AdminPanel api={api} ui={ui} onClose={() => setAdminOpen(false)} />}
