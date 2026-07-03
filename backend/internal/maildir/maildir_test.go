@@ -2,8 +2,11 @@ package maildir
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestValidFolderLexical pins the traversal guard with hierarchy support: well-formed flat AND
@@ -171,6 +174,89 @@ func TestFolderOrdering(t *testing.T) {
 	// Gamma, Alpha explicit; Beta (omitted) appended alphabetically; ghost (unknown) dropped.
 	if want := []string{"Gamma", "Alpha", "Beta"}; !equal(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// TestPurgeExpiredTrash covers Trash auto-expiry: a freshly-deleted message survives, one whose
+// deletion is older than the retention window is purged, purging is scoped to Trash (INBOX is never
+// touched), and a retention <= 0 is a no-op.
+func TestPurgeExpiredTrash(t *testing.T) {
+	store := New(t.TempDir())
+	u := "tester"
+
+	// Two messages in INBOX; delete both into Trash.
+	for _, subj := range []string{"old", "fresh"} {
+		if _, err := store.Deliver(u, "INBOX", []byte("Subject: "+subj+"\r\n\r\nbody"), false); err != nil {
+			t.Fatalf("deliver %s: %v", subj, err)
+		}
+	}
+	msgs, _ := store.List(u, "INBOX")
+	if len(msgs) != 2 {
+		t.Fatalf("INBOX has %d msgs, want 2", len(msgs))
+	}
+	for _, m := range msgs {
+		if err := store.Delete(u, "INBOX", m.ID); err != nil {
+			t.Fatalf("delete %s: %v", m.ID, err)
+		}
+	}
+	if c, _ := store.List(u, "Trash"); len(c) != 2 {
+		t.Fatalf("Trash has %d msgs after delete, want 2", len(c))
+	}
+
+	// Backdate exactly one Trash message to 40 days ago.
+	trashNew := filepath.Join(folderDir(store.userRoot(u), "Trash"), "new")
+	entries, _ := os.ReadDir(trashNew)
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(trashNew, entries[0].Name()), old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	// retention <= 0 is a no-op.
+	if n, err := store.PurgeExpiredTrash(0); err != nil || n != 0 {
+		t.Fatalf("PurgeExpiredTrash(0) = %d, %v; want 0, nil", n, err)
+	}
+	if c, _ := store.List(u, "Trash"); len(c) != 2 {
+		t.Fatalf("Trash has %d msgs after no-op purge, want 2", len(c))
+	}
+
+	// 30-day retention removes the backdated one, keeps the fresh one.
+	n, err := store.PurgeExpiredTrash(30 * 24 * time.Hour)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("purged %d, want 1", n)
+	}
+	if c, _ := store.List(u, "Trash"); len(c) != 1 {
+		t.Errorf("Trash has %d msgs after purge, want 1", len(c))
+	}
+}
+
+// TestPurgeKeepsRecentlyDeletedOldMail guards the stamping: an old message (received long ago) that
+// is deleted *now* must NOT be purged immediately — the 30-day clock runs from deletion, not receipt.
+func TestPurgeKeepsRecentlyDeletedOldMail(t *testing.T) {
+	store := New(t.TempDir())
+	u := "tester"
+	if _, err := store.Deliver(u, "INBOX", []byte("Subject: ancient\r\n\r\nbody"), false); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	msgs, _ := store.List(u, "INBOX")
+	// Backdate the message in INBOX to a year ago (an old, long-received mail).
+	inboxNew := filepath.Join(store.userRoot(u), "new")
+	entries, _ := os.ReadDir(inboxNew)
+	ancient := time.Now().Add(-365 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(inboxNew, entries[0].Name()), ancient, ancient); err != nil {
+		t.Fatal(err)
+	}
+	// Delete it now — stampNow should reset its clock to the present.
+	if err := store.Delete(u, "INBOX", msgs[0].ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if n, err := store.PurgeExpiredTrash(30 * 24 * time.Hour); err != nil || n != 0 {
+		t.Fatalf("purge removed %d (err=%v); a just-deleted mail must survive despite its old receive date", n, err)
+	}
+	if c, _ := store.List(u, "Trash"); len(c) != 1 {
+		t.Errorf("Trash has %d msgs, want 1", len(c))
 	}
 }
 

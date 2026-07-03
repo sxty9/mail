@@ -342,9 +342,11 @@ func (s *Store) DeleteFolder(user, name string) error {
 				if e.IsDir() {
 					continue
 				}
-				if err := os.Rename(filepath.Join(dir, sub, e.Name()), filepath.Join(trash, sub, e.Name())); err != nil {
+				tdst := filepath.Join(trash, sub, e.Name())
+				if err := os.Rename(filepath.Join(dir, sub, e.Name()), tdst); err != nil {
 					return err
 				}
+				stampNow(tdst) // start the 30-day Trash clock from this deletion, not the receive time
 			}
 		}
 	}
@@ -621,7 +623,22 @@ func (s *Store) Move(user, from, to, id string) error {
 	} else {
 		dst = filepath.Join(dstDir, "new", id)
 	}
-	return os.Rename(src, dst)
+	if err := os.Rename(src, dst); err != nil {
+		return err
+	}
+	if to == "Trash" {
+		stampNow(dst)
+	}
+	return nil
+}
+
+// stampNow best-effort resets a file's mtime to the current time. It marks the moment a message
+// entered Trash, so the Trash sweeper measures retention from the deletion — not from when the
+// message was originally received (a Maildir filename/mtime otherwise carries the receive time, and
+// os.Rename preserves it). Best-effort: the retention policy is never worth failing a delete over.
+func stampNow(path string) {
+	now := time.Now()
+	_ = os.Chtimes(path, now, now)
 }
 
 // Delete moves a message to Trash, or removes it permanently if already in Trash.
@@ -648,6 +665,57 @@ func (s *Store) Remove(user, folder, id string) error {
 		return os.ErrNotExist
 	}
 	return os.Remove(path)
+}
+
+// PurgeExpiredTrash permanently removes every message in every user's Trash whose deletion time
+// (the file mtime, stamped by stampNow when it entered Trash) is older than retention, returning
+// the number of messages removed. A retention <= 0 disables purging (returns 0, nil). This backs
+// maild's Trash auto-expiry: mail sits in Trash as a grace period, then is gone for good.
+func (s *Store) PurgeExpiredTrash(retention time.Duration) (int, error) {
+	if retention <= 0 {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // no mailboxes yet — nothing to purge
+		}
+		return 0, err
+	}
+	cutoff := time.Now().Add(-retention)
+	total := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		total += purgeTrashDir(folderDir(s.userRoot(e.Name()), "Trash"), cutoff)
+	}
+	return total, nil
+}
+
+// purgeTrashDir removes the files in one Trash maildir (both new/ and cur/) whose mtime predates
+// cutoff, returning how many were removed. Caller holds s.mu.
+func purgeTrashDir(trash string, cutoff time.Time) int {
+	removed := 0
+	for _, sub := range []string{"new", "cur"} {
+		dir := filepath.Join(trash, sub)
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || !info.ModTime().Before(cutoff) {
+				continue
+			}
+			if os.Remove(filepath.Join(dir, e.Name())) == nil {
+				removed++
+			}
+		}
+	}
+	return removed
 }
 
 // Folders returns the standard mailboxes followed by the user's custom folders, each with its

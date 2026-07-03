@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -67,6 +68,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go out.Run(ctx)
+	go runTrashSweep(ctx, store, trashRetention())
 
 	srv := &http.Server{
 		Handler:           api.New(v, store, inst, reg, del, ap, inboundSecret, internalSecret, calURL, calSecret).Handler(),
@@ -90,6 +92,47 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
 	log.Print("maild stopped")
+}
+
+// trashRetention is how long a deleted message lingers in Trash before the sweeper removes it for
+// good. Defaults to 30 days; MAILD_TRASH_RETENTION_DAYS overrides it (0 disables auto-expiry).
+func trashRetention() time.Duration {
+	days := 30
+	if v := strings.TrimSpace(os.Getenv("MAILD_TRASH_RETENTION_DAYS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			days = n
+		}
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
+// runTrashSweep periodically purges messages that have sat in Trash past the retention window.
+// It sweeps once at startup, then every 6 hours — Trash cleanup is housekeeping, not latency
+// sensitive. Exits on ctx.Done. A non-positive retention disables it entirely.
+func runTrashSweep(ctx context.Context, store *maildir.Store, retention time.Duration) {
+	if retention <= 0 {
+		log.Print("maild: Trash auto-expiry disabled (MAILD_TRASH_RETENTION_DAYS=0)")
+		return
+	}
+	log.Printf("maild: Trash auto-expiry after %s", retention)
+	sweep := func() {
+		if n, err := store.PurgeExpiredTrash(retention); err != nil {
+			log.Printf("maild: trash sweep error: %v", err)
+		} else if n > 0 {
+			log.Printf("maild: trash sweep purged %d expired message(s)", n)
+		}
+	}
+	sweep()
+	t := time.NewTicker(6 * time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sweep()
+		}
+	}
 }
 
 func getenv(key, def string) string {
