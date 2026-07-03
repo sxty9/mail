@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Avatar,
   Box,
@@ -38,6 +38,53 @@ const READ = 'hp_mail_read';
 const SEND = 'hp_mail_send';
 const ADMIN = 'hp_mail_admin';
 
+// Persisted display-mode preference: whether the reader/composer opens in the maximized "larger
+// window" (Vollbild) or the inline side view. Once the user maximizes, every subsequent compose/read
+// reopens maximized until they shrink it again — across sending, saving a draft, closing, switching
+// folders, and page reloads.
+//
+// Two layers, because neither alone covers every case:
+//   • a MODULE-LEVEL cache — survives a full remount of MailApp within the same page session (the
+//     dashboard can remount a service plugin on navigation, which would otherwise reset useState),
+//     and works even if the browser blocks storage.
+//   • localStorage — carries the preference across page reloads / new sessions.
+// Both are best-effort; storage errors are swallowed and the module cache still holds the value for
+// the current page session.
+const EXPAND_PREF_KEY = 'maild:expandView';
+
+let expandPrefCache: boolean | null = null;
+
+function readExpandPref(): boolean {
+  if (expandPrefCache !== null) return expandPrefCache;
+  try {
+    expandPrefCache = localStorage.getItem(EXPAND_PREF_KEY) === '1';
+  } catch {
+    expandPrefCache = false;
+  }
+  return expandPrefCache;
+}
+
+function writeExpandPref(v: boolean): void {
+  expandPrefCache = v;
+  try {
+    localStorage.setItem(EXPAND_PREF_KEY, v ? '1' : '0');
+  } catch {
+    /* best-effort; the module cache still holds it for this page session */
+  }
+}
+
+function usePersistentExpand(): [boolean, (v: boolean | ((prev: boolean) => boolean)) => void] {
+  const [expand, setExpand] = useState<boolean>(readExpandPref);
+  const set = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    setExpand((prev) => {
+      const next = typeof v === 'function' ? v(prev) : v;
+      writeExpandPref(next);
+      return next;
+    });
+  }, []);
+  return [expand, set];
+}
+
 type RightView = { kind: 'read' } | { kind: 'compose'; state: ComposeState; seq: number };
 
 export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
@@ -57,7 +104,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const [adminOpen, setAdminOpen] = useState(false);
   const [composeSeq, setComposeSeq] = useState(0);
   const [composeDirty, setComposeDirty] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expandPref, setExpandPref] = usePersistentExpand();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -82,6 +129,12 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const q = search.trim().toLowerCase();
   const rows = q ? messages.filter((m) => `${m.subject} ${m.from} ${m.to}`.toLowerCase().includes(q)) : messages;
   const showRecipient = folder === 'Sent' || folder === 'Drafts';
+
+  // The maximized overlay only makes sense when the right pane actually has something to show — a
+  // composer, or a message being read. This lets the preference persist across close/send without
+  // ever leaving a floating empty fullscreen box behind.
+  const hasRightContent = view.kind === 'compose' || openId != null;
+  const expanded = expandPref && hasRightContent;
 
   // leaveCompose auto-saves an unsaved compose to Drafts before the inline composer is replaced, so
   // the user never loses work and is never forced to discard or send (the Discard button is the
@@ -398,16 +451,14 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               state={view.state}
               addresses={addresses}
               onDirtyChange={setComposeDirty}
-              onExpand={() => setExpanded((v) => !v)}
+              onExpand={() => setExpandPref((v) => !v)}
               expanded={expanded}
               onClose={() => {
                 setComposeDirty(false);
-                setExpanded(false);
                 setView({ kind: 'read' });
               }}
               onSent={() => {
                 setComposeDirty(false);
-                setExpanded(false);
                 setView({ kind: 'read' });
                 refreshAll();
               }}
@@ -422,14 +473,14 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               onChanged={refreshAll}
               onReply={canSend ? startReply : undefined}
               onForward={canSend ? startForward : undefined}
-              onExpand={openId ? () => setExpanded((v) => !v) : undefined}
+              onExpand={openId ? () => setExpandPref((v) => !v) : undefined}
               expanded={expanded}
             />
           )}
         </Box>
       </Box>
 
-      {expanded && <Box className="fixed inset-0 z-40 bg-black/60" onClick={() => setExpanded(false)} />}
+      {expanded && <Box className="fixed inset-0 z-40 bg-black/60" onClick={() => setExpandPref(false)} />}
 
       {appsOpen && <AppPasswordsModal api={api} ui={ui} instance={instance} onClose={() => setAppsOpen(false)} />}
       {adminOpen && <AdminPanel api={api} ui={ui} onClose={() => setAdminOpen(false)} />}
