@@ -21,6 +21,7 @@ import {
   XIcon,
   useLiveQuery,
   userHasRight,
+  type ContactOption,
   type MenuItem,
   type ServiceApiClient,
   type ServiceContextProps,
@@ -85,9 +86,43 @@ function usePersistentExpand(): [boolean, (v: boolean | ((prev: boolean) => bool
   return [expand, set];
 }
 
+// Persisted "last view": the active folder and the open message. Restored on page reload / remount
+// so the user lands back where they were instead of snapping to INBOX with nothing selected. Same
+// two-layer, best-effort approach as the display-mode preference above (module cache survives a
+// remount within the page session; localStorage carries it across full reloads). openId is always
+// stored together with its folder — switching folders clears it — so the pair is never mismatched.
+const VIEW_KEY = 'maild:lastView';
+
+type LastView = { folder: string; openId: string | null };
+
+let viewCache: LastView | null = null;
+
+function readLastView(): LastView {
+  if (viewCache) return viewCache;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null') as Partial<LastView> | null;
+    viewCache =
+      parsed && typeof parsed.folder === 'string'
+        ? { folder: parsed.folder, openId: typeof parsed.openId === 'string' ? parsed.openId : null }
+        : { folder: 'INBOX', openId: null };
+  } catch {
+    viewCache = { folder: 'INBOX', openId: null };
+  }
+  return viewCache;
+}
+
+function writeLastView(v: LastView): void {
+  viewCache = v;
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(v));
+  } catch {
+    /* best-effort; the module cache still holds it for this page session */
+  }
+}
+
 type RightView = { kind: 'read' } | { kind: 'compose'; state: ComposeState; seq: number };
 
-export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
+export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContextProps) {
   useEffect(() => {
     nav.setTitle('Mail');
   }, [nav]);
@@ -96,9 +131,12 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const canSend = userHasRight(user, SEND);
   const canAdmin = userHasRight(user, ADMIN);
 
-  const [folder, setFolder] = useState<string>('INBOX');
+  // Restore the folder + open message from the previous page session so a reload keeps the user in
+  // place (see readLastView). Falls back to INBOX / nothing open on a first visit or storage error.
+  const initialView = readLastView();
+  const [folder, setFolder] = useState<string>(initialView.folder);
   const [search, setSearch] = useState('');
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(initialView.openId);
   const [view, setView] = useState<RightView>({ kind: 'read' });
   const [appsOpen, setAppsOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
@@ -110,8 +148,22 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   // only the currently-open message and is reset whenever the open message changes, so every new
   // selection starts in the side view even when the saved preference is "maximized".
   const [readerExpanded, setReaderExpanded] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => (initialView.openId ? new Set([initialView.openId]) : new Set()));
   const [anchorId, setAnchorId] = useState<string | null>(null);
+  // Contact directory for the recipient fields: contax resolves who this user may address, so the
+  // composer can suggest by name/nickname (with an avatar) instead of a bare address.
+  const searchRecipients = useCallback(
+    async (q: string): Promise<ContactOption[]> => {
+      try {
+        const res = await apiFor('contax').get<{ contacts: ContactOption[] }>(`lookup?q=${encodeURIComponent(q)}`);
+        return res.contacts ?? [];
+      } catch {
+        return [];
+      }
+    },
+    [apiFor],
+  );
+
   const composerRef = useRef<ComposerHandle>(null);
 
   const info = useLiveInfo(api, canRead);
@@ -122,6 +174,22 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   useEffect(() => {
     setReaderExpanded(false);
   }, [openId]);
+
+  // Persist the active folder + open message so a page reload / remount restores them (see readLastView).
+  useEffect(() => {
+    writeLastView({ folder, openId });
+  }, [folder, openId]);
+
+  // A restored open message may no longer exist (deleted elsewhere, Trash auto-expired). Once the
+  // folder's list has loaded, drop a missing openId so the reader shows the empty state instead of
+  // spinning forever. The full list is unpaginated, so "absent from the list" means "gone".
+  useEffect(() => {
+    const data = list?.data;
+    if (openId && data && data.folder === folder && !data.messages.some((m) => m.id === openId)) {
+      setOpenId(null);
+      setSelected(new Set());
+    }
+  }, [list?.data, openId, folder]);
 
   if (!canRead) {
     return (
@@ -466,6 +534,7 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               ui={ui}
               state={view.state}
               addresses={addresses}
+              searchRecipients={searchRecipients}
               onDirtyChange={setComposeDirty}
               onExpand={() => setExpandPref((v) => !v)}
               expanded={expanded}
@@ -482,7 +551,10 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
           ) : (
             <ReadingPane
               api={api}
+              apiFor={apiFor}
               ui={ui}
+              user={user}
+              openService={nav.openService}
               folder={folder}
               id={openId}
               folders={folders}

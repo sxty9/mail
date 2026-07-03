@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   ChevronDownIcon,
+  ContactPicker,
   DropdownMenu,
   FileIcon,
   IconButton,
@@ -14,12 +15,19 @@ import {
   Text,
   UploadControl,
   XIcon,
+  type ContactOption,
   type MenuItem,
   type ServiceApiClient,
   type ServiceUiBridge,
 } from '@holistic/ui';
 import type { AttachmentView, SendResult } from './types';
 import { fileToBase64, formatSize, splitAddrs } from './helpers';
+
+// Seed the recipient pickers from a comma/semicolon-separated address string (replies, drafts): each
+// address becomes an email-only chip that the picker enriches (name + avatar) when re-picked.
+function toOptions(s: string): ContactOption[] {
+  return splitAddrs(s).map((email) => ({ email, displayName: email }));
+}
 
 export interface ComposeState {
   from?: string;
@@ -47,6 +55,8 @@ export interface ComposerProps {
   ui: ServiceUiBridge;
   state: ComposeState;
   addresses: string[];
+  /** Directory search backing the recipient pickers (wired to contax by the host). */
+  searchRecipients: (query: string) => Promise<ContactOption[]>;
   onClose: () => void;
   onSent: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -62,13 +72,13 @@ export interface ComposerProps {
  * away auto-saves (via the imperative handle), sending removes the draft, and discarding deletes it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { api, ui, state, addresses, onClose, onSent, onDirtyChange, onExpand, expanded, className },
+  { api, ui, state, addresses, searchRecipients, onClose, onSent, onDirtyChange, onExpand, expanded, className },
   ref,
 ) {
   const [from, setFrom] = useState(state.from || addresses[0] || '');
-  const [to, setTo] = useState(state.to);
-  const [cc, setCc] = useState(state.cc);
-  const [bcc, setBcc] = useState(state.bcc);
+  const [to, setTo] = useState<ContactOption[]>(() => toOptions(state.to));
+  const [cc, setCc] = useState<ContactOption[]>(() => toOptions(state.cc));
+  const [bcc, setBcc] = useState<ContactOption[]>(() => toOptions(state.bcc));
   const [showCc, setShowCc] = useState(!!state.cc);
   const [showBcc, setShowBcc] = useState(!!state.bcc);
   const [subject, setSubject] = useState(state.subject);
@@ -80,7 +90,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const draftIdRef = useRef<string | null>(state.draftId ?? null);
 
   // Report whether there's content worth keeping, so the host knows to auto-save on navigation.
-  const dirty = !!(to.trim() || cc.trim() || bcc.trim() || subject.trim() || text.trim() || files.length || kept.length);
+  const dirty = !!(to.length || cc.length || bcc.length || subject.trim() || text.trim() || files.length || kept.length);
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -90,9 +100,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   function payload() {
     return {
       from: from || undefined,
-      to: splitAddrs(to),
-      cc: splitAddrs(cc),
-      bcc: splitAddrs(bcc),
+      to: to.map((o) => o.email),
+      cc: cc.map((o) => o.email),
+      bcc: bcc.map((o) => o.email),
       subject,
       body: text,
       htmlBody: html,
@@ -103,7 +113,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }
 
   async function send() {
-    if (!to.trim() && !cc.trim() && !bcc.trim()) {
+    if (!to.length && !cc.length && !bcc.length) {
       ui.toast({ title: 'Add at least one recipient', variant: 'error' });
       return;
     }
@@ -218,7 +228,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
             To
           </Text>
-          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="user@domain, …" className="flex-1" />
+          <ContactPicker value={to} onChange={setTo} onSearch={searchRecipients} placeholder="Name oder Adresse …" className="flex-1" />
           {!showCc && (
             <Button variant="ghost" size="sm" onClick={() => setShowCc(true)}>
               Cc
@@ -235,7 +245,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
               Cc
             </Text>
-            <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="user@domain, …" className="flex-1" />
+            <ContactPicker value={cc} onChange={setCc} onSearch={searchRecipients} placeholder="Name oder Adresse …" className="flex-1" />
           </Stack>
         )}
         {showBcc && (
@@ -243,7 +253,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
               Bcc
             </Text>
-            <Input value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="hidden recipients, …" className="flex-1" />
+            <ContactPicker value={bcc} onChange={setBcc} onSearch={searchRecipients} placeholder="Verborgene Empfänger …" className="flex-1" />
           </Stack>
         )}
         <Stack direction="row" align="center" gap={2}>
