@@ -21,6 +21,7 @@ import {
   Text,
   TrashIcon,
   type FileEntry,
+  type HolisticUser,
   type MenuItem,
   type ServiceApiClient,
   type ServiceUiBridge,
@@ -31,7 +32,10 @@ import { attachmentEntry, displayName, downloadAttachment, folderLabel, formatFu
 
 export function ReadingPane({
   api,
+  apiFor,
   ui,
+  user,
+  openService,
   folder,
   id,
   folders,
@@ -43,7 +47,12 @@ export function ReadingPane({
   className,
 }: {
   api: ServiceApiClient;
+  // A client for any sibling service + the current user + tab-switch — needed so the shared
+  // FilePreview can offer aigentic's "Ask AI" on an attachment (aigentic reaches its own backend).
+  apiFor: (serviceId: string) => ServiceApiClient;
   ui: ServiceUiBridge;
+  user: HolisticUser;
+  openService: (serviceId: string, subPath?: string) => void;
   folder: string;
   id: string | null;
   folders: FolderInfo[];
@@ -298,6 +307,21 @@ export function ReadingPane({
         onDownload={(e) => preview && saveAttachment(preview.index, e.name)}
         onPrev={preview && preview.index > 0 ? () => loadPreview(msg.attachments[preview.index - 1]) : undefined}
         onNext={preview && preview.index < msg.attachments.length - 1 ? () => loadPreview(msg.attachments[preview.index + 1]) : undefined}
+        actionHost={{
+          apiFor,
+          ui,
+          user,
+          openService,
+          // Raw bytes of the shown attachment via our authenticated channel — the SDK hands these to
+          // a viewer action (aigentic's "Ask AI") for image/PDF; text rides in the preview payload.
+          loadBytes: preview
+            ? async () => {
+                const res = await api.raw(attUrl(preview.index, false));
+                if (!res.ok) throw new Error(`download failed (${res.status})`);
+                return new Uint8Array(await res.arrayBuffer());
+              }
+            : undefined,
+        }}
       />
     </Stack>
   );
