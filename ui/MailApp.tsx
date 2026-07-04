@@ -191,6 +191,26 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
     }
   }, [list?.data, openId, folder]);
 
+  // Esc returns the list to a clean slate — it clears the selection and closes the open message, the
+  // same "deselect" that clicking the empty list area performs. It stays out of the way while
+  // composing, when a modal owns the screen, or while the caret is in a field (search box, a menu, an
+  // editable) — those own the Escape key — and is a no-op when nothing is selected or open, so it
+  // never swallows an Escape another handler wants.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (view.kind === 'compose' || appsOpen || adminOpen) return;
+      if (selected.size === 0 && openId == null) return;
+      const el = document.activeElement;
+      if (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      setSelected(new Set());
+      setOpenId(null);
+      setAnchorId(null);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [view.kind, appsOpen, adminOpen, selected, openId]);
+
   if (!canRead) {
     return (
       <EmptyState
