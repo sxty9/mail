@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Avatar,
+  BoltIcon,
   Box,
   Button,
   DownloadIcon,
@@ -20,6 +21,7 @@ import {
   Stack,
   Text,
   TrashIcon,
+  userHasRight,
   type FileEntry,
   type HolisticUser,
   type MenuItem,
@@ -29,6 +31,7 @@ import {
 } from '@holistic/ui';
 import type { AttachmentView, FolderInfo, MessageFull } from './types';
 import { attachmentEntry, displayName, downloadAttachment, folderLabel, formatFull, formatSize } from './helpers';
+import { SummarizePanel } from './SummarizePanel';
 
 export function ReadingPane({
   api,
@@ -66,11 +69,13 @@ export function ReadingPane({
   const [msg, setMsg] = useState<MessageFull | null>(null);
   const [loading, setLoading] = useState(false);
   const [plain, setPlain] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [preview, setPreview] = useState<{ entry: FileEntry; index: number; rawUrl?: string; text?: TextPayload | null } | null>(null);
 
   useEffect(() => {
     setPlain(false);
     setPreview(null);
+    setSummaryOpen(false);
     if (!id) {
       setMsg(null);
       return;
@@ -169,6 +174,12 @@ export function ReadingPane({
 
   const hasHtml = !!msg.html && !plain;
 
+  // "Summarize with AI" reaches the sibling aigentic service. Only offer it to users who may call it
+  // (hp_aigentic_run — also enforced there), and send the engine kind they're entitled to: the paid
+  // Auto router ('choose') when they hold the metered cost right, otherwise the non-metered Claude CLI.
+  const canSummarize = userHasRight(user, 'hp_aigentic_run');
+  const summaryKind = userHasRight(user, 'hp_aigentic_api') ? 'choose' : 'claude-cli';
+
   return (
     <Stack gap={0} className={`flex h-full min-h-0 flex-col ${className ?? ''}`}>
       <Stack gap={3} className="shrink-0 border-b border-separator px-5 py-4">
@@ -233,6 +244,17 @@ export function ReadingPane({
           >
             Delete
           </Button>
+          {canSummarize && (
+            <Button
+              variant="secondary"
+              size="sm"
+              iconLeft={<BoltIcon />}
+              aria-pressed={summaryOpen}
+              onClick={() => setSummaryOpen((o) => !o)}
+            >
+              {summaryOpen ? 'Hide AI summary' : 'Summarize with AI'}
+            </Button>
+          )}
           {msg.html && (
             <InlineLink onClick={() => setPlain((p) => !p)}>{plain ? 'Show formatted' : 'Show plain text'}</InlineLink>
           )}
@@ -284,6 +306,19 @@ export function ReadingPane({
           </Stack>
         )}
       </Stack>
+
+      {canSummarize && (
+        <SummarizePanel
+          key={msg.id}
+          open={summaryOpen}
+          msg={msg}
+          kind={summaryKind}
+          apiFor={apiFor}
+          ui={ui}
+          openService={openService}
+          onClose={() => setSummaryOpen(false)}
+        />
+      )}
 
       <Box className="min-h-0 flex-1 overflow-auto px-5 py-4">
         {hasHtml ? (
