@@ -57,6 +57,8 @@ export interface ComposerProps {
   addresses: string[];
   /** Directory search backing the recipient pickers (wired to contax by the host). */
   searchRecipients: (query: string) => Promise<ContactOption[]>;
+  /** Expand a selected contax group into member addresses (wired to contax by the host). */
+  onExpandGroup?: (groupId: string) => Promise<ContactOption[]>;
   onClose: () => void;
   onSent: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -72,7 +74,7 @@ export interface ComposerProps {
  * away auto-saves (via the imperative handle), sending removes the draft, and discarding deletes it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { api, ui, state, addresses, searchRecipients, onClose, onSent, onDirtyChange, onExpand, expanded, className },
+  { api, ui, state, addresses, searchRecipients, onExpandGroup, onClose, onSent, onDirtyChange, onExpand, expanded, className },
   ref,
 ) {
   const [from, setFrom] = useState(state.from || addresses[0] || '');
@@ -228,7 +230,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
             To
           </Text>
-          <ContactPicker value={to} onChange={setTo} onSearch={searchRecipients} placeholder="Name oder Adresse …" className="flex-1" />
+          <ContactPicker value={to} onChange={setTo} onSearch={searchRecipients} onExpandGroup={onExpandGroup} placeholder="Name oder Adresse …" className="flex-1" />
           {!showCc && (
             <Button variant="ghost" size="sm" onClick={() => setShowCc(true)}>
               Cc
@@ -245,7 +247,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
               Cc
             </Text>
-            <ContactPicker value={cc} onChange={setCc} onSearch={searchRecipients} placeholder="Name oder Adresse …" className="flex-1" />
+            <ContactPicker value={cc} onChange={setCc} onSearch={searchRecipients} onExpandGroup={onExpandGroup} placeholder="Name oder Adresse …" className="flex-1" />
           </Stack>
         )}
         {showBcc && (
@@ -253,7 +255,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
               Bcc
             </Text>
-            <ContactPicker value={bcc} onChange={setBcc} onSearch={searchRecipients} placeholder="Verborgene Empfänger …" className="flex-1" />
+            <ContactPicker value={bcc} onChange={setBcc} onSearch={searchRecipients} onExpandGroup={onExpandGroup} placeholder="Verborgene Empfänger …" className="flex-1" />
           </Stack>
         )}
         <Stack direction="row" align="center" gap={2}>

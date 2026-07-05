@@ -155,7 +155,32 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
   const searchRecipients = useCallback(
     async (q: string): Promise<ContactOption[]> => {
       try {
-        const res = await apiFor('contax').get<{ contacts: ContactOption[] }>(`lookup?q=${encodeURIComponent(q)}`);
+        const res = await apiFor('contax').get<{
+          contacts: ContactOption[];
+          groups?: { id: string; name: string; memberCount: number }[];
+        }>(`lookup?q=${encodeURIComponent(q)}&includeGroups=1`);
+        // Personal groups first (they expand into member addresses on select), then contacts.
+        const groups: ContactOption[] = (res.groups ?? []).map((g) => ({
+          email: '',
+          displayName: g.name,
+          kind: 'group' as const,
+          groupId: g.id,
+          memberCount: g.memberCount,
+        }));
+        return [...groups, ...(res.contacts ?? [])];
+      } catch {
+        return [];
+      }
+    },
+    [apiFor],
+  );
+  // Expand a chosen contax group into its member contacts (the picker merges the addresses in).
+  const expandGroup = useCallback(
+    async (groupId: string): Promise<ContactOption[]> => {
+      try {
+        const res = await apiFor('contax').get<{ contacts: ContactOption[] }>(
+          `groups/${encodeURIComponent(groupId)}/members`,
+        );
         return res.contacts ?? [];
       } catch {
         return [];
@@ -555,6 +580,7 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
               state={view.state}
               addresses={addresses}
               searchRecipients={searchRecipients}
+              onExpandGroup={expandGroup}
               onDirtyChange={setComposeDirty}
               onExpand={() => setExpandPref((v) => !v)}
               expanded={expanded}
