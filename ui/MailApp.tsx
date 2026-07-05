@@ -143,10 +143,11 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
   const [composeSeq, setComposeSeq] = useState(0);
   const [composeDirty, setComposeDirty] = useState(false);
   const [expandPref, setExpandPref] = usePersistentExpand();
-  // Reading is the exception to the saved display mode: opening a message from the list must NEVER
-  // jump straight to full screen — that stays a manual, per-message choice. readerExpanded tracks
-  // only the currently-open message and is reset whenever the open message changes, so every new
-  // selection starts in the side view even when the saved preference is "maximized".
+  // Reading is the exception to the saved display mode: a plain click from the list must NEVER jump
+  // straight to full screen — that stays a manual, per-message choice (the expand button, or a
+  // double-click on the row). readerExpanded tracks only the currently-open message; openMessage
+  // sets it explicitly (false for a plain click, true for a double-click), so every plain selection
+  // starts in the side view even when the saved preference is "maximized".
   const [readerExpanded, setReaderExpanded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => (initialView.openId ? new Set([initialView.openId]) : new Set()));
   const [anchorId, setAnchorId] = useState<string | null>(null);
@@ -195,11 +196,6 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
   const boxes = useBoxes(api, canRead);
   const list = useList(api, folder, canRead);
 
-  // Selecting another message drops back to the side view (the reading full-screen never auto-applies).
-  useEffect(() => {
-    setReaderExpanded(false);
-  }, [openId]);
-
   // Persist the active folder + open message so a page reload / remount restores them (see readLastView).
   useEffect(() => {
     writeLastView({ folder, openId });
@@ -216,25 +212,35 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
     }
   }, [list?.data, openId, folder]);
 
-  // Esc returns the list to a clean slate — it clears the selection and closes the open message, the
-  // same "deselect" that clicking the empty list area performs. It stays out of the way while
-  // composing, when a modal owns the screen, or while the caret is in a field (search box, a menu, an
-  // editable) — those own the Escape key — and is a no-op when nothing is selected or open, so it
-  // never swallows an Escape another handler wants.
+  // Esc is a two-stage "step back". If the reader is maximized (opened full screen via a double-click
+  // or the expand button), the first Esc only shrinks it back to the side view — the message stays
+  // open. Otherwise Esc returns the list to a clean slate — clearing the selection and closing the
+  // open message, the same "deselect" that clicking the empty list area performs. It stays out of the
+  // way while composing, when a modal owns the screen, or while the caret is in a field (search box, a
+  // menu, an editable) — those own the Escape key — and is a no-op when nothing is maximized,
+  // selected, or open, so it never swallows an Escape another handler wants.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
-      if (view.kind === 'compose' || appsOpen || adminOpen) return;
-      if (selected.size === 0 && openId == null) return;
+      if (appsOpen || adminOpen) return;
       const el = document.activeElement;
       if (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      // Stage one: a maximized reader shrinks back to the side view (recording that as the saved
+      // display mode, matching the dimmed-backdrop click) instead of closing the message outright.
+      if (view.kind === 'read' && openId != null && readerExpanded) {
+        setReaderExpanded(false);
+        setExpandPref(false);
+        return;
+      }
+      if (view.kind === 'compose') return;
+      if (selected.size === 0 && openId == null) return;
       setSelected(new Set());
       setOpenId(null);
       setAnchorId(null);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [view.kind, appsOpen, adminOpen, selected, openId]);
+  }, [view.kind, appsOpen, adminOpen, selected, openId, readerExpanded, setExpandPref]);
 
   if (!canRead) {
     return (
@@ -285,12 +291,16 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
     setAnchorId(null);
   }
 
-  async function openMessage(m: MessageMeta) {
+  // expand=true opens the message straight into full screen (a double-click on the row); a plain
+  // click leaves expand=false, i.e. the side view.
+  async function openMessage(m: MessageMeta, expand = false) {
     await leaveCompose();
     setAnchorId(m.id);
-    // Opening a draft resumes editing it in the composer rather than just reading it.
+    // Opening a draft resumes editing it in the composer rather than just reading it. A double-click
+    // resumes it maximized (the composer follows the shared display-mode preference).
     if (folder === 'Drafts') {
       setSelected(new Set());
+      if (expand) setExpandPref(true);
       void openDraft(m.id);
       return;
     }
@@ -298,6 +308,9 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
     // "N selected" count always agree (no more "0 selected" while a row is highlighted).
     setSelected(new Set([m.id]));
     setOpenId(m.id);
+    // Reading never auto-applies the saved display mode: a plain click stays in the side view, a
+    // double-click opens full screen. Either way this is the explicit, per-message choice.
+    setReaderExpanded(expand);
     setView({ kind: 'read' });
     if (!m.seen) {
       try {
@@ -557,6 +570,7 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
                 showRecipient={showRecipient}
                 query={q}
                 onOpen={openMessage}
+                onOpenExpanded={(m) => openMessage(m, true)}
                 onToggle={toggleSelect}
                 onRange={rangeSelect}
               />

@@ -4,9 +4,9 @@ import { displayName, formatWhen } from './helpers';
 
 /**
  * MessageList renders the mailbox as rounded, selectable rows (no full-width divider lines) — the
- * same visual language as the folder tree. A plain click opens a message; Cmd/Ctrl-click toggles it
- * in a multi-selection; Shift-click selects a range. The open row is tinted; selected rows get a
- * ring; unread rows show a dot + bolder sender.
+ * same visual language as the folder tree. A plain click opens a message; a double-click opens it
+ * full screen; Cmd/Ctrl-click toggles it in a multi-selection; Shift-click selects a range. The open
+ * row is tinted; selected rows get a ring; unread rows show a dot + bolder sender.
  */
 export function MessageList({
   messages,
@@ -15,6 +15,7 @@ export function MessageList({
   showRecipient,
   query,
   onOpen,
+  onOpenExpanded,
   onToggle,
   onRange,
 }: {
@@ -24,6 +25,7 @@ export function MessageList({
   showRecipient: boolean;
   query: string;
   onOpen: (m: MessageMeta) => void;
+  onOpenExpanded: (m: MessageMeta) => void;
   onToggle: (m: MessageMeta) => void;
   onRange: (m: MessageMeta) => void;
 }) {
@@ -66,6 +68,12 @@ export function MessageList({
               if (e.shiftKey) onRange(m);
               else if (e.metaKey || e.ctrlKey) onToggle(m);
               else onOpen(m);
+            }}
+            onDoubleClick={(e) => {
+              // Double-click opens the message full screen (Vollbild). Modifier-clicks drive
+              // multi-select, so a modified double-click stays a selection gesture — never a maximize.
+              if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+              onOpenExpanded(m);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
