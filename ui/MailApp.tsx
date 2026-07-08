@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertIcon,
   Avatar,
   Box,
   Button,
@@ -11,9 +12,12 @@ import {
   IconButton,
   KeyIcon,
   MailIcon,
+  MaximizeIcon,
   MoveIcon,
   PencilIcon,
+  ReplyIcon,
   SearchField,
+  SendIcon,
   Spinner,
   Stack,
   Text,
@@ -191,6 +195,9 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
   );
 
   const composerRef = useRef<ComposerHandle>(null);
+  // Holds the currently-visible rows so the Cmd/Ctrl+A handler (registered once, before the early
+  // return below) can read them without re-subscribing on every list change.
+  const rowsRef = useRef<MessageMeta[]>([]);
 
   const info = useLiveInfo(api, canRead);
   const boxes = useBoxes(api, canRead);
@@ -242,6 +249,26 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [view.kind, appsOpen, adminOpen, selected, openId, readerExpanded, setExpandPref]);
 
+  // Cmd/Ctrl+A selects every message in the current list, and toggles back to none when they are all
+  // already selected. It yields to text fields — the search box, the composer, any editable — so the
+  // native "select all text" still works there, and stays out of the way while a modal or the
+  // composer owns the screen. Reads the live rows via rowsRef so it need not re-bind per keystroke.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.key !== 'a' && e.key !== 'A') || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (e.defaultPrevented || appsOpen || adminOpen || view.kind === 'compose') return;
+      const el = document.activeElement;
+      if (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      const rws = rowsRef.current;
+      if (!rws.length) return;
+      e.preventDefault();
+      setSelected((cur) => (rws.every((m) => cur.has(m.id)) ? new Set<string>() : new Set(rws.map((m) => m.id))));
+      setAnchorId(rws[rws.length - 1]?.id ?? null);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [appsOpen, adminOpen, view.kind]);
+
   if (!canRead) {
     return (
       <EmptyState
@@ -257,6 +284,7 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
   const messages = list?.data?.messages ?? [];
   const q = search.trim().toLowerCase();
   const rows = q ? messages.filter((m) => `${m.subject} ${m.from} ${m.to}`.toLowerCase().includes(q)) : messages;
+  rowsRef.current = rows;
   const showRecipient = folder === 'Sent' || folder === 'Drafts';
 
   // Compose auto-restores the saved display mode (Vollbild vs. side view); reading never does —
@@ -469,6 +497,179 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
     ui.toast({ title: `Moved to ${folderLabel(target)}` });
   }
 
+  // ── right-click context menu for messages ─────────────────────────────────────────────
+  // Flag/unflag is the bulk counterpart of the single-message flag toggle; seen/answered are left
+  // untouched (the backend merges partial flag updates).
+  const bulkFlag = (flagged: boolean) => bulkEach((id) => api.post('flags', { mailbox: folder, id, flagged }).then(() => undefined));
+
+  // Reply/Forward need the full message (body + headers), which the list rows don't carry — fetch it,
+  // then hand off to the existing composer flows.
+  async function withFull(id: string, fn: (full: MessageFull) => void) {
+    try {
+      fn(await api.get<MessageFull>(`message?mailbox=${encodeURIComponent(folder)}&id=${encodeURIComponent(id)}`));
+    } catch (e) {
+      ui.toast({ title: 'Could not load message', description: (e as Error).message, variant: 'error' });
+    }
+  }
+  async function replyToMeta(m: MessageMeta) {
+    await leaveCompose();
+    await withFull(m.id, startReply);
+  }
+  async function forwardMeta(m: MessageMeta) {
+    await leaveCompose();
+    await withFull(m.id, startForward);
+  }
+
+  const dropFromSelection = (id: string) =>
+    setSelected((cur) => {
+      if (!cur.has(id)) return cur;
+      const next = new Set(cur);
+      next.delete(id);
+      return next;
+    });
+
+  async function flagSingle(m: MessageMeta, patch: { seen?: boolean; flagged?: boolean }) {
+    try {
+      await api.post('flags', { mailbox: folder, id: m.id, ...patch });
+      refreshAll();
+    } catch (e) {
+      ui.toast({ title: 'Action failed', description: (e as Error).message, variant: 'error' });
+    }
+  }
+
+  async function moveSingle(m: MessageMeta, to: string) {
+    try {
+      await api.post('move', { mailbox: folder, id: m.id, to });
+      if (openId === m.id) {
+        setOpenId(null);
+        setView({ kind: 'read' });
+      }
+      dropFromSelection(m.id);
+      refreshAll();
+      ui.toast({ title: `Moved to ${folderLabel(to)}` });
+    } catch (e) {
+      ui.toast({ title: 'Could not move message', description: (e as Error).message, variant: 'error' });
+    }
+  }
+
+  async function deleteSingle(m: MessageMeta) {
+    // Delete from Trash is a permanent purge (there is no deeper bin), so it asks first; elsewhere it
+    // just moves to Trash and is reversible.
+    if (folder === 'Trash') {
+      const ok = await ui.confirm({
+        title: 'Delete permanently?',
+        description: 'This message will be permanently deleted. This cannot be undone.',
+        danger: true,
+        confirmLabel: 'Delete',
+      });
+      if (!ok) return;
+    }
+    try {
+      await api.post('delete', { mailbox: folder, id: m.id });
+      if (openId === m.id) {
+        setOpenId(null);
+        setView({ kind: 'read' });
+      }
+      dropFromSelection(m.id);
+      refreshAll();
+      ui.toast({ title: folder === 'Trash' ? 'Message deleted' : 'Moved to Trash' });
+    } catch (e) {
+      ui.toast({ title: 'Could not delete message', description: (e as Error).message, variant: 'error' });
+    }
+  }
+
+  async function bulkDeleteConfirmed() {
+    if (folder === 'Trash') {
+      const ok = await ui.confirm({
+        title: `Delete ${selected.size} permanently?`,
+        description: 'These messages will be permanently deleted. This cannot be undone.',
+        danger: true,
+        confirmLabel: 'Delete',
+      });
+      if (!ok) return;
+    }
+    bulkDelete();
+  }
+
+  // On right-click, make the row the selection unless it is already part of a multi-selection — so
+  // the menu's "N selected" bulk actions still apply to the whole set the user built up.
+  function contextTarget(m: MessageMeta) {
+    setSelected((cur) => (cur.has(m.id) && cur.size > 1 ? cur : new Set([m.id])));
+    setAnchorId(m.id);
+  }
+
+  function messageMenu(m: MessageMeta): MenuItem[] {
+    const moveTargets = (onPick: (to: string) => void): MenuItem[] =>
+      folders.filter((f) => f.name !== folder).map((f) => ({ id: f.name, label: folderLabel(f.name), onSelect: () => onPick(f.name) }));
+    const inTrash = folder === 'Trash';
+
+    // Bulk menu: the row is part of a 2+ selection, so every action fans out over the whole set.
+    if (selected.has(m.id) && selected.size > 1) {
+      const n = selected.size;
+      const items: MenuItem[] = [];
+      // Read/flag state is meaningless for drafts (same reason the single-draft menu omits them).
+      if (folder !== 'Drafts') {
+        items.push(
+          { id: 'read', label: `Mark ${n} as read`, icon: <CheckIcon className="h-4 w-4" />, onSelect: () => bulkMark(true) },
+          { id: 'unread', label: `Mark ${n} as unread`, icon: <EyeOffIcon className="h-4 w-4" />, onSelect: () => bulkMark(false) },
+          { id: 'flag', label: `Flag ${n}`, icon: <AlertIcon className="h-4 w-4" />, onSelect: () => bulkFlag(true) },
+          { id: 'unflag', label: `Unflag ${n}`, icon: <AlertIcon className="h-4 w-4" />, onSelect: () => bulkFlag(false) },
+        );
+      }
+      const targets = moveTargets(bulkMove);
+      if (targets.length) items.push({ id: 'move', label: `Move ${n} to…`, icon: <MoveIcon className="h-4 w-4" />, separatorBefore: items.length > 0, submenu: targets });
+      items.push({
+        id: 'delete',
+        label: inTrash ? `Delete ${n} permanently` : folder === 'Drafts' ? `Delete ${n} drafts` : `Delete ${n}`,
+        icon: <TrashIcon className="h-4 w-4" />,
+        danger: true,
+        separatorBefore: items.length > 0,
+        onSelect: bulkDeleteConfirmed,
+      });
+      return items;
+    }
+
+    // A draft has no reply/forward/flag semantics — opening it resumes editing.
+    if (folder === 'Drafts') {
+      const items: MenuItem[] = [{ id: 'edit', label: 'Edit', icon: <PencilIcon className="h-4 w-4" />, onSelect: () => openMessage(m) }];
+      const targets = moveTargets((to) => moveSingle(m, to));
+      if (targets.length) items.push({ id: 'move', label: 'Move to…', icon: <MoveIcon className="h-4 w-4" />, separatorBefore: true, submenu: targets });
+      items.push({ id: 'delete', label: 'Delete draft', icon: <TrashIcon className="h-4 w-4" />, danger: true, separatorBefore: true, onSelect: () => deleteSingle(m) });
+      return items;
+    }
+
+    // Single-message menu.
+    const items: MenuItem[] = [
+      { id: 'open', label: 'Open', icon: <MailIcon className="h-4 w-4" />, onSelect: () => openMessage(m) },
+      { id: 'open-full', label: 'Open in a larger window', icon: <MaximizeIcon className="h-4 w-4" />, onSelect: () => openMessage(m, true) },
+    ];
+    if (canSend) {
+      items.push(
+        { id: 'reply', label: 'Reply', icon: <ReplyIcon className="h-4 w-4" />, separatorBefore: true, onSelect: () => replyToMeta(m) },
+        { id: 'forward', label: 'Forward', icon: <SendIcon className="h-4 w-4" />, onSelect: () => forwardMeta(m) },
+      );
+    }
+    items.push(
+      m.seen
+        ? { id: 'unread', label: 'Mark as unread', icon: <EyeOffIcon className="h-4 w-4" />, separatorBefore: true, onSelect: () => flagSingle(m, { seen: false }) }
+        : { id: 'read', label: 'Mark as read', icon: <CheckIcon className="h-4 w-4" />, separatorBefore: true, onSelect: () => flagSingle(m, { seen: true }) },
+      m.flagged
+        ? { id: 'unflag', label: 'Unflag', icon: <AlertIcon className="h-4 w-4" />, onSelect: () => flagSingle(m, { flagged: false }) }
+        : { id: 'flag', label: 'Flag', icon: <AlertIcon className="h-4 w-4" />, onSelect: () => flagSingle(m, { flagged: true }) },
+    );
+    const targets = moveTargets((to) => moveSingle(m, to));
+    if (targets.length) items.push({ id: 'move', label: 'Move to…', icon: <MoveIcon className="h-4 w-4" />, separatorBefore: true, submenu: targets });
+    items.push({
+      id: 'delete',
+      label: inTrash ? 'Delete permanently' : 'Delete',
+      icon: <TrashIcon className="h-4 w-4" />,
+      danger: true,
+      separatorBefore: true,
+      onSelect: () => deleteSingle(m),
+    });
+    return items;
+  }
+
   return (
     <Box className="flex h-full min-h-0 flex-col gap-3 px-6 py-5">
       <Stack direction="row" align="center" justify="between" gap={3} wrap className="shrink-0">
@@ -504,7 +705,7 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
             folders={folders}
             active={folder}
             onSelect={selectFolder}
-            onChanged={() => boxes?.refresh()}
+            onChanged={refreshAll}
             onDropMessages={moveMessagesTo}
           />
         </Box>
@@ -539,7 +740,7 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
                     }
                   />
                 )}
-                <IconButton label="Delete" size="sm" variant="ghost" onClick={bulkDelete}>
+                <IconButton label="Delete" size="sm" variant="ghost" onClick={bulkDeleteConfirmed}>
                   <TrashIcon className="h-4 w-4" />
                 </IconButton>
                 <IconButton label="Clear selection" size="sm" variant="ghost" onClick={clearSelection}>
@@ -573,6 +774,8 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
                 onOpenExpanded={(m) => openMessage(m, true)}
                 onToggle={toggleSelect}
                 onRange={rangeSelect}
+                menuItems={messageMenu}
+                onContextTarget={contextTarget}
               />
             )}
           </Box>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Badge,
   Button,
+  CheckIcon,
   ChevronDownIcon,
   DropdownMenu,
   FileTextIcon,
@@ -124,6 +125,32 @@ export function FolderSidebar({
     }
   }
 
+  async function markAllRead(folder: string) {
+    try {
+      await api.post('folders/mark-read', { name: folder });
+      onChanged();
+    } catch (e) {
+      ui.toast({ title: 'Could not mark folder read', description: (e as Error).message, variant: 'error' });
+    }
+  }
+
+  async function emptyTrash() {
+    const ok = await ui.confirm({
+      title: 'Empty Trash?',
+      description: 'Every message in Trash is permanently deleted. This cannot be undone.',
+      danger: true,
+      confirmLabel: 'Empty Trash',
+    });
+    if (!ok) return;
+    try {
+      await api.post('trash/empty', {});
+      ui.toast({ title: 'Trash emptied' });
+      onChanged();
+    } catch (e) {
+      ui.toast({ title: 'Could not empty Trash', description: (e as Error).message, variant: 'error' });
+    }
+  }
+
   // moveByRename re-parents a folder (and its subtree) and keeps the active selection pointing at
   // the moved folder if the user was inside it. The backend rejects moving a folder into its own
   // subtree; we also guard here so an obviously-illegal drop is a no-op.
@@ -157,29 +184,52 @@ export function FolderSidebar({
 
   const nodes = buildNodes(folders, active);
 
+  // folderMenuItems is the single source of truth for a folder's actions, shared by the hover
+  // chevron (rowActions) and the right-click context menu (TreeNav's nodeContextMenu). Custom
+  // folders get the full management set; any folder with unread offers "Mark all as read"; Trash
+  // offers "Empty Trash". A folder with no applicable action (e.g. a read standard folder) yields
+  // an empty list, which suppresses both the chevron and the custom menu.
+  function folderMenuItems(node: TreeNavNode): MenuItem[] {
+    const info = folders.find((f) => f.name === node.id);
+    const isCustom = !!info?.custom;
+    const items: MenuItem[] = [];
+    if (isCustom) {
+      items.push(
+        {
+          id: 'sub',
+          label: 'New subfolder',
+          icon: <FolderPlusIcon className="h-4 w-4" />,
+          onSelect: () => {
+            setCreatingUnder(node.id);
+            setName('');
+          },
+        },
+        {
+          id: 'rename',
+          label: 'Rename',
+          icon: <PencilIcon className="h-4 w-4" />,
+          onSelect: () => {
+            setRenaming(node.id);
+            setName(folderLeaf(node.id));
+          },
+        },
+      );
+    }
+    if ((info?.unread ?? 0) > 0) {
+      items.push({ id: 'markread', label: 'Mark all as read', icon: <CheckIcon className="h-4 w-4" />, separatorBefore: items.length > 0, onSelect: () => markAllRead(node.id) });
+    }
+    if (node.id === 'Trash' && (info?.total ?? 0) > 0) {
+      items.push({ id: 'empty', label: 'Empty Trash', icon: <TrashIcon className="h-4 w-4" />, danger: true, separatorBefore: items.length > 0, onSelect: () => emptyTrash() });
+    }
+    if (isCustom) {
+      items.push({ id: 'delete', label: 'Delete', icon: <TrashIcon className="h-4 w-4" />, danger: true, separatorBefore: true, onSelect: () => remove(node.id) });
+    }
+    return items;
+  }
+
   function rowActions(node: TreeNavNode) {
-    if (!node.draggable) return null; // standard folders have no management menu
-    const items: MenuItem[] = [
-      {
-        id: 'sub',
-        label: 'New subfolder',
-        icon: <FolderPlusIcon className="h-4 w-4" />,
-        onSelect: () => {
-          setCreatingUnder(node.id);
-          setName('');
-        },
-      },
-      {
-        id: 'rename',
-        label: 'Rename',
-        icon: <PencilIcon className="h-4 w-4" />,
-        onSelect: () => {
-          setRenaming(node.id);
-          setName(folderLeaf(node.id));
-        },
-      },
-      { id: 'delete', label: 'Delete', icon: <TrashIcon className="h-4 w-4" />, danger: true, onSelect: () => remove(node.id) },
-    ];
+    const items = folderMenuItems(node);
+    if (!items.length) return null;
     return (
       <DropdownMenu
         align="end"
@@ -223,6 +273,7 @@ export function FolderSidebar({
         }}
         onMove={onMove}
         rowActions={rowActions}
+        nodeContextMenu={folderMenuItems}
         externalDropType="application/x-mail-ids"
         onExternalDrop={(targetId, dt) => {
           const raw = dt.getData('application/x-mail-ids');

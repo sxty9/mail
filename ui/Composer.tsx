@@ -190,7 +190,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   return (
     <Stack gap={0} className={`flex h-full min-h-0 flex-col ${className ?? ''}`}>
       <Stack direction="row" align="center" justify="between" gap={2} className="shrink-0 border-b border-separator px-4 py-3">
-        <Text variant="headline" weight="semibold" truncate>
+        <Text variant="title3" weight="semibold" truncate>
           {subject.trim() || 'New message'}
         </Text>
         <Stack direction="row" align="center" gap={1} className="shrink-0">
