@@ -286,3 +286,67 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// TestMarkAllReadAndEmptyTrash covers the two bulk folder actions behind the right-click menu:
+// MarkAllRead flips every unread message to seen (skipping already-read ones and idempotent on a
+// second sweep), and EmptyTrash permanently purges Trash (and is a clean no-op when already empty).
+func TestMarkAllReadAndEmptyTrash(t *testing.T) {
+	store := New(t.TempDir())
+	u := "tester"
+	if err := store.EnsureUser(u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three unread + one already-seen: MarkAllRead must touch only the three unread.
+	for i := 0; i < 3; i++ {
+		if _, err := store.Deliver(u, "INBOX", []byte("Subject: m\r\n\r\nbody"), false); err != nil {
+			t.Fatalf("deliver: %v", err)
+		}
+	}
+	if _, err := store.Deliver(u, "INBOX", []byte("Subject: seen\r\n\r\nbody"), true); err != nil {
+		t.Fatalf("deliver seen: %v", err)
+	}
+
+	n, err := store.MarkAllRead(u, "INBOX")
+	if err != nil {
+		t.Fatalf("MarkAllRead: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("MarkAllRead marked %d, want 3", n)
+	}
+	msgs, _ := store.List(u, "INBOX")
+	if len(msgs) != 4 {
+		t.Fatalf("INBOX has %d msgs, want 4", len(msgs))
+	}
+	for _, m := range msgs {
+		if !m.Seen {
+			t.Errorf("message %s still unread after MarkAllRead", m.ID)
+		}
+	}
+	if again, _ := store.MarkAllRead(u, "INBOX"); again != 0 {
+		t.Errorf("second MarkAllRead marked %d, want 0 (idempotent)", again)
+	}
+
+	// EmptyTrash: relocate two into Trash, then purge them for good.
+	for _, m := range msgs[:2] {
+		if err := store.Move(u, "INBOX", "Trash", m.ID); err != nil {
+			t.Fatalf("move to Trash: %v", err)
+		}
+	}
+	if c, _ := store.List(u, "Trash"); len(c) != 2 {
+		t.Fatalf("Trash has %d before empty, want 2", len(c))
+	}
+	removed, err := store.EmptyTrash(u)
+	if err != nil {
+		t.Fatalf("EmptyTrash: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("EmptyTrash removed %d, want 2", removed)
+	}
+	if c, _ := store.List(u, "Trash"); len(c) != 0 {
+		t.Fatalf("Trash has %d after empty, want 0", len(c))
+	}
+	if removed, err := store.EmptyTrash(u); err != nil || removed != 0 {
+		t.Errorf("EmptyTrash on empty = (%d, %v), want (0, nil)", removed, err)
+	}
+}

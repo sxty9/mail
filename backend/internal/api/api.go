@@ -93,6 +93,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+base+"folders/rename", s.guard(rights.GroupRead, true, s.folderRename))
 	mux.HandleFunc("POST "+base+"folders/delete", s.guard(rights.GroupRead, true, s.folderDelete))
 	mux.HandleFunc("POST "+base+"folders/reorder", s.guard(rights.GroupRead, true, s.folderReorder))
+	mux.HandleFunc("POST "+base+"folders/mark-read", s.guard(rights.GroupRead, true, s.folderMarkRead))
+	mux.HandleFunc("POST "+base+"trash/empty", s.guard(rights.GroupRead, true, s.trashEmpty))
 
 	// Sending, gated by hp_mail_send.
 	mux.HandleFunc("POST "+base+"send", s.guard(rights.GroupSend, true, s.send))
@@ -668,6 +670,38 @@ func (s *Server) folderDelete(w http.ResponseWriter, r *http.Request, u *auth.Us
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// folderMarkRead marks every message in a mailbox as seen (the "Mark all as read" folder action).
+// Works for any real mailbox — standard or custom — so a right-click on Inbox clears its unread
+// count in one call instead of one request per message.
+func (s *Server) folderMarkRead(w http.ResponseWriter, r *http.Request, u *auth.User) {
+	var req folderReq
+	if !decodeBody(w, r, 4096, &req) || !maildir.ValidFolder(req.Name) {
+		writeErr(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	if !s.store.HasFolder(u.Username, req.Name) {
+		writeErr(w, http.StatusNotFound, "Unknown mailbox")
+		return
+	}
+	n, err := s.store.MarkAllRead(u.Username, req.Name)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Could not mark folder read")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "marked": n})
+}
+
+// trashEmpty permanently removes every message in the user's Trash (the "Empty Trash" action).
+// This purges — there is no deeper bin to fall into — so the UI guards it behind a confirm.
+func (s *Server) trashEmpty(w http.ResponseWriter, _ *http.Request, u *auth.User) {
+	n, err := s.store.EmptyTrash(u.Username)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Could not empty Trash")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n})
 }
 
 type reorderReq struct {

@@ -655,6 +655,47 @@ func (s *Store) Delete(user, folder, id string) error {
 	return s.Move(user, folder, "Trash", id)
 }
 
+// MarkAllRead sets the Seen flag on every unread message in folder, returning the number newly
+// marked. It reuses the single-message SetFlags path (which correctly relocates new/ → cur/ and
+// rewrites the flag suffix) rather than touching Maildir files directly, so the Maildir invariants
+// stay in one place. A message vanishing mid-sweep is skipped rather than aborting the batch.
+func (s *Store) MarkAllRead(user, folder string) (int, error) {
+	msgs, err := s.List(user, folder)
+	if err != nil {
+		return 0, err
+	}
+	seen := true
+	n := 0
+	for _, m := range msgs {
+		if m.Seen {
+			continue
+		}
+		if err := s.SetFlags(user, folder, m.ID, Flags{Seen: &seen}); err != nil {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+// EmptyTrash permanently removes every message in the user's Trash, returning the count removed.
+// Delete already purges (rather than re-trashing) when the source folder is Trash, so this is a
+// straight sweep over that tested path.
+func (s *Store) EmptyTrash(user string) (int, error) {
+	msgs, err := s.List(user, "Trash")
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, m := range msgs {
+		if err := s.Delete(user, "Trash", m.ID); err != nil {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
 // Remove permanently deletes a message from a folder (no Trash detour). Used for drafts: replacing
 // a draft with a newer version, or clearing it once the message is sent or discarded.
 func (s *Store) Remove(user, folder, id string) error {
