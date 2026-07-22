@@ -92,7 +92,7 @@ export function MessageList({
                   </Text>
                 </Stack>
               </Stack>
-              <Stack direction="column" align="end" gap={1} className="shrink-0">
+              <Stack direction="col" align="end" gap={1} className="shrink-0">
                 <Text variant="caption" color="tertiary" className="whitespace-nowrap">
                   {formatWhen(m.date)}
                 </Text>
