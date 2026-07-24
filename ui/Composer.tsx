@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   ChevronDownIcon,
+  ContactPicker,
   DropdownMenu,
   FileIcon,
   IconButton,
@@ -14,12 +15,13 @@ import {
   Text,
   UploadControl,
   XIcon,
+  type ContactOption,
   type MenuItem,
   type ServiceApiClient,
   type ServiceUiBridge,
 } from '@holistic/ui';
 import type { AttachmentView, SendResult } from './types';
-import { fileToBase64, formatSize, splitAddrs } from './helpers';
+import { fileToBase64, formatSize, parseRecipients } from './helpers';
 
 export interface ComposeState {
   from?: string;
@@ -47,6 +49,10 @@ export interface ComposerProps {
   ui: ServiceUiBridge;
   state: ComposeState;
   addresses: string[];
+  /** Directory type-ahead for To/Cc/Bcc — the contax lookup (see MailApp). */
+  searchContacts: (query: string) => Promise<ContactOption[]>;
+  /** Expand a picked contax personal group into its member addresses. */
+  expandGroup?: (groupId: string) => Promise<ContactOption[]>;
   onClose: () => void;
   onSent: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -62,15 +68,15 @@ export interface ComposerProps {
  * away auto-saves (via the imperative handle), sending removes the draft, and discarding deletes it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { api, ui, state, addresses, onClose, onSent, onDirtyChange, onExpand, expanded, className },
+  { api, ui, state, addresses, searchContacts, expandGroup, onClose, onSent, onDirtyChange, onExpand, expanded, className },
   ref,
 ) {
   const [from, setFrom] = useState(state.from || addresses[0] || '');
-  const [to, setTo] = useState(state.to);
-  const [cc, setCc] = useState(state.cc);
-  const [bcc, setBcc] = useState(state.bcc);
-  const [showCc, setShowCc] = useState(!!state.cc);
-  const [showBcc, setShowBcc] = useState(!!state.bcc);
+  const [to, setTo] = useState<ContactOption[]>(() => parseRecipients(state.to));
+  const [cc, setCc] = useState<ContactOption[]>(() => parseRecipients(state.cc));
+  const [bcc, setBcc] = useState<ContactOption[]>(() => parseRecipients(state.bcc));
+  const [showCc, setShowCc] = useState(cc.length > 0);
+  const [showBcc, setShowBcc] = useState(bcc.length > 0);
   const [subject, setSubject] = useState(state.subject);
   const [html, setHtml] = useState(state.html);
   const [text, setText] = useState(state.text);
@@ -80,7 +86,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const draftIdRef = useRef<string | null>(state.draftId ?? null);
 
   // Report whether there's content worth keeping, so the host knows to auto-save on navigation.
-  const dirty = !!(to.trim() || cc.trim() || bcc.trim() || subject.trim() || text.trim() || files.length || kept.length);
+  const dirty = !!(to.length || cc.length || bcc.length || subject.trim() || text.trim() || files.length || kept.length);
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -90,9 +96,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   function payload() {
     return {
       from: from || undefined,
-      to: splitAddrs(to),
-      cc: splitAddrs(cc),
-      bcc: splitAddrs(bcc),
+      to: to.map((c) => c.email),
+      cc: cc.map((c) => c.email),
+      bcc: bcc.map((c) => c.email),
       subject,
       body: text,
       htmlBody: html,
@@ -103,7 +109,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }
 
   async function send() {
-    if (!to.trim() && !cc.trim() && !bcc.trim()) {
+    if (!to.length && !cc.length && !bcc.length) {
       ui.toast({ title: 'Add at least one recipient', variant: 'error' });
       return;
     }
@@ -178,7 +184,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   return (
     <Stack gap={0} className={`flex h-full min-h-0 flex-col ${className ?? ''}`}>
       <Stack direction="row" align="center" justify="between" gap={2} className="shrink-0 border-b border-separator px-4 py-3">
-        <Text variant="headline" weight="semibold" truncate>
+        <Text variant="title3" weight="semibold" truncate>
           {subject.trim() || 'New message'}
         </Text>
         <Stack direction="row" align="center" gap={1} className="shrink-0">
@@ -214,36 +220,42 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </Text>
           )}
         </Stack>
-        <Stack direction="row" align="center" gap={2}>
-          <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
+        <Stack direction="row" align="start" gap={2}>
+          <Text variant="footnote" color="tertiary" className="w-12 shrink-0 pt-2">
             To
           </Text>
-          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="user@domain, …" className="flex-1" />
+          <Box className="min-w-0 flex-1">
+            <ContactPicker value={to} onChange={setTo} onSearch={searchContacts} onExpandGroup={expandGroup} placeholder="Name or address …" />
+          </Box>
           {!showCc && (
-            <Button variant="ghost" size="sm" onClick={() => setShowCc(true)}>
+            <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowCc(true)}>
               Cc
             </Button>
           )}
           {!showBcc && (
-            <Button variant="ghost" size="sm" onClick={() => setShowBcc(true)}>
+            <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowBcc(true)}>
               Bcc
             </Button>
           )}
         </Stack>
         {showCc && (
-          <Stack direction="row" align="center" gap={2}>
-            <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
+          <Stack direction="row" align="start" gap={2}>
+            <Text variant="footnote" color="tertiary" className="w-12 shrink-0 pt-2">
               Cc
             </Text>
-            <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="user@domain, …" className="flex-1" />
+            <Box className="min-w-0 flex-1">
+              <ContactPicker value={cc} onChange={setCc} onSearch={searchContacts} onExpandGroup={expandGroup} placeholder="Name or address …" />
+            </Box>
           </Stack>
         )}
         {showBcc && (
-          <Stack direction="row" align="center" gap={2}>
-            <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
+          <Stack direction="row" align="start" gap={2}>
+            <Text variant="footnote" color="tertiary" className="w-12 shrink-0 pt-2">
               Bcc
             </Text>
-            <Input value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="hidden recipients, …" className="flex-1" />
+            <Box className="min-w-0 flex-1">
+              <ContactPicker value={bcc} onChange={setBcc} onSearch={searchContacts} onExpandGroup={expandGroup} placeholder="Name or address …" />
+            </Box>
           </Stack>
         )}
         <Stack direction="row" align="center" gap={2}>

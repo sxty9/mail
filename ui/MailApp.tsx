@@ -21,6 +21,7 @@ import {
   XIcon,
   useLiveQuery,
   userHasRight,
+  type ContactOption,
   type MenuItem,
   type ServiceApiClient,
   type ServiceContextProps,
@@ -87,7 +88,7 @@ function usePersistentExpand(): [boolean, (v: boolean | ((prev: boolean) => bool
 
 type RightView = { kind: 'read' } | { kind: 'compose'; state: ComposeState; seq: number };
 
-export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
+export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContextProps) {
   useEffect(() => {
     nav.setTitle('Mail');
   }, [nav]);
@@ -95,6 +96,42 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
   const canRead = userHasRight(user, READ);
   const canSend = userHasRight(user, SEND);
   const canAdmin = userHasRight(user, ADMIN);
+
+  // contax is the directory access point for people/recipients. We reuse it here so To/Cc/Bcc get the
+  // same avatar type-ahead (and personal-group expansion) as icaly's attendee picker, rather than a
+  // second address path. Groups arrive via includeGroups=1 and are expanded to member addresses on pick.
+  const searchContacts = useCallback(
+    async (q: string): Promise<ContactOption[]> => {
+      try {
+        const res = await apiFor('contax').get<{
+          contacts?: ContactOption[];
+          groups?: { id: string; name: string; memberCount: number }[];
+        }>(`lookup?q=${encodeURIComponent(q)}&includeGroups=1`);
+        const groups: ContactOption[] = (res.groups ?? []).map((g) => ({
+          email: '',
+          displayName: g.name,
+          kind: 'group',
+          groupId: g.id,
+          memberCount: g.memberCount,
+        }));
+        return [...groups, ...(res.contacts ?? [])];
+      } catch {
+        return [];
+      }
+    },
+    [apiFor],
+  );
+  const expandGroup = useCallback(
+    async (groupId: string): Promise<ContactOption[]> => {
+      try {
+        const res = await apiFor('contax').get<{ contacts?: ContactOption[] }>(`groups/${encodeURIComponent(groupId)}/members`);
+        return res.contacts ?? [];
+      } catch {
+        return [];
+      }
+    },
+    [apiFor],
+  );
 
   const [folder, setFolder] = useState<string>('INBOX');
   const [search, setSearch] = useState('');
@@ -466,6 +503,8 @@ export function MailApp({ user, api, ui, nav, instance }: ServiceContextProps) {
               ui={ui}
               state={view.state}
               addresses={addresses}
+              searchContacts={searchContacts}
+              expandGroup={expandGroup}
               onDirtyChange={setComposeDirty}
               onExpand={() => setExpandPref((v) => !v)}
               expanded={expanded}
