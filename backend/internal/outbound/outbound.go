@@ -8,6 +8,8 @@ package outbound
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -127,14 +130,29 @@ func (q *Queue) deliver(ctx context.Context, id string) error {
 	rawPath := filepath.Join(q.dir, id+".eml")
 	mb, err := os.ReadFile(metaPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // the commit marker is already gone — nothing to deliver
+		}
 		return err
 	}
 	var job Job
 	if err := json.Unmarshal(mb, &job); err != nil {
-		return err
+		// A corrupt marker can never be delivered; left in place, flush would retry it on every tick
+		// forever. Discard it (marker first) so the spool self-heals instead of spinning.
+		log.Printf("maild: outbound %s corrupt job discarded: %v", id, err)
+		q.reap(metaPath, rawPath)
+		return nil
 	}
 	raw, err := os.ReadFile(rawPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// The marker outlived its message body (e.g. a removal interrupted by an older build's
+			// remove-body-first order). It can never be delivered, so reap it rather than deferring it
+			// forever with its Attempts frozen — the job would otherwise never dead-letter.
+			log.Printf("maild: outbound %s message body missing, job discarded", id)
+			q.reap(metaPath, rawPath)
+			return nil
+		}
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.edgeURL, bytes.NewReader(raw))
@@ -149,8 +167,10 @@ func (q *Queue) deliver(ctx context.Context, id string) error {
 	if err == nil {
 		defer resp.Body.Close()
 		if resp.StatusCode/100 == 2 {
-			_ = os.Remove(rawPath)
-			_ = os.Remove(metaPath)
+			// Remove the .json commit marker FIRST: once it is gone the job is invisible to flush, so
+			// a crash between the two removes leaves at most a harmless orphan .eml — never a visible
+			// marker whose body is missing (which would otherwise defer forever).
+			q.reap(metaPath, rawPath)
 			return nil
 		}
 	}
@@ -180,18 +200,39 @@ func (q *Queue) deliver(ctx context.Context, id string) error {
 func (q *Queue) deadLetter(id, metaPath, rawPath string, job Job) {
 	failedDir := filepath.Join(q.dir, "failed")
 	if err := os.MkdirAll(failedDir, 0o700); err == nil {
-		_ = os.Rename(rawPath, filepath.Join(failedDir, id+".eml"))
+		// Move the .json marker out of the active spool FIRST so the job stops being visible to
+		// flush; a crash mid-move then leaves at most an orphan .eml, never a visible body-less job.
 		_ = os.Rename(metaPath, filepath.Join(failedDir, id+".json"))
+		_ = os.Rename(rawPath, filepath.Join(failedDir, id+".eml"))
 	} else {
-		_ = os.Remove(rawPath)
-		_ = os.Remove(metaPath)
+		q.reap(metaPath, rawPath)
 	}
 	log.Printf("maild: outbound %s DEAD-LETTERED after %d attempts (from=%s to=%v)", id, job.Attempts, job.From, job.To)
 }
 
+// reap deletes a job's files from the active spool, the .json commit marker first so an interrupted
+// reap can only ever leave a harmless orphan .eml — never a visible marker whose message body is
+// gone. Used for delivered jobs and for unrecoverable (corrupt / body-missing) ones alike.
+func (q *Queue) reap(metaPath, rawPath string) {
+	_ = os.Remove(metaPath)
+	_ = os.Remove(rawPath)
+}
+
+// enqueueSeq makes concurrently-spooled ids unique within this process. Two Enqueue calls landing
+// in the same nanosecond would otherwise collide on a purely time-based id, and the second
+// writeFileAtomic would clobber the first — silently dropping an outbound message. Mirrors the
+// maildir store's delivery naming (atomic sequence + random suffix).
+var enqueueSeq uint64
+
+// uniqueID returns a collision-free spool id. The time+pid prefix keeps ids readable and roughly
+// ordered; the atomic sequence guarantees intra-process uniqueness even under concurrent Enqueue,
+// and the random suffix covers the (single-daemon-improbable) cross-process case.
 func uniqueID() string {
 	now := time.Now()
-	return fmt.Sprintf("%d-%09d-%d", now.Unix(), now.Nanosecond(), os.Getpid())
+	seq := atomic.AddUint64(&enqueueSeq, 1)
+	var rnd [8]byte
+	_, _ = rand.Read(rnd[:])
+	return fmt.Sprintf("%d-%09d-%d-%d-%s", now.Unix(), now.Nanosecond(), os.Getpid(), seq, hex.EncodeToString(rnd[:]))
 }
 
 func writeFileAtomic(path string, data []byte) error {
