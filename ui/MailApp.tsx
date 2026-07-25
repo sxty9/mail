@@ -157,7 +157,7 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
   const [anchorId, setAnchorId] = useState<string | null>(null);
   // Contact directory for the recipient fields: contax resolves who this user may address, so the
   // composer can suggest by name/nickname (with an avatar) instead of a bare address.
-  const searchRecipients = useCallback(
+  const searchContacts = useCallback(
     async (q: string): Promise<ContactOption[]> => {
       try {
         const res = await apiFor('contax').get<{
@@ -796,8 +796,8 @@ export function MailApp({ user, api, apiFor, ui, nav, instance }: ServiceContext
               ui={ui}
               state={view.state}
               addresses={addresses}
-              searchRecipients={searchRecipients}
-              onExpandGroup={expandGroup}
+              searchContacts={searchContacts}
+              expandGroup={expandGroup}
               onDirtyChange={setComposeDirty}
               onExpand={() => setExpandPref((v) => !v)}
               expanded={expanded}

@@ -260,6 +260,49 @@ func TestPurgeKeepsRecentlyDeletedOldMail(t *testing.T) {
 	}
 }
 
+// TestDeliverSerializedUnderStoreLock pins the atomic-access contract: a Deliver participates in
+// the store's mutual exclusion, so it cannot proceed while another tree mutation holds the store
+// lock (here we stand in for a folder rename/delete by holding it directly). Before Deliver took
+// the lock, a delivery could interleave with a folder delete and have its message silently
+// RemoveAll'd, or resurrect a half-created maildir a reader could then observe.
+func TestDeliverSerializedUnderStoreLock(t *testing.T) {
+	store := New(t.TempDir())
+	u := "tester"
+	// Pre-create the tree so Deliver's own EnsureUser (which runs before the lock) is a no-op and
+	// the goroutine blocks purely on the store lock.
+	if err := store.EnsureUser(u); err != nil {
+		t.Fatal(err)
+	}
+
+	store.mu.Lock() // simulate a folder rename/delete holding the store lock
+	done := make(chan error, 1)
+	go func() {
+		_, err := store.Deliver(u, "INBOX", []byte("Subject: x\r\n\r\nb"), false)
+		done <- err
+	}()
+
+	select {
+	case <-done:
+		store.mu.Unlock()
+		t.Fatal("Deliver completed while the store lock was held — delivery is not serialized against tree mutations")
+	case <-time.After(100 * time.Millisecond):
+		// Expected: Deliver is parked on s.mu.Lock().
+	}
+
+	store.mu.Unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Deliver after unlock: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver did not complete after the store lock was released")
+	}
+	if c, _ := store.List(u, "INBOX"); len(c) != 1 {
+		t.Fatalf("INBOX has %d msgs after delivery, want 1", len(c))
+	}
+}
+
 func customOrder(t *testing.T, s *Store, u string) []string {
 	t.Helper()
 	folders, err := s.Folders(u)

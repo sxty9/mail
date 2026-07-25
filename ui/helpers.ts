@@ -1,6 +1,6 @@
 // Pure helpers shared across the mail UI. No JSX here — only data/string utilities and the
 // binary-download flow (which goes through props.api.raw, never fetch).
-import type { FileEntry, ServiceApiClient, ViewerKind } from '@holistic/ui';
+import type { ContactOption, FileEntry, ServiceApiClient, ViewerKind } from '@holistic/ui';
 import type { AttachmentView, MessageFull, OutAttachment } from './types';
 
 /** Friendly name from a "Name <addr>" or bare address. */
@@ -43,6 +43,21 @@ export function splitAddrs(s: string): string[] {
     .split(/[,;]/)
     .map((x) => x.trim())
     .filter(Boolean);
+}
+
+/**
+ * parseRecipients turns a header-style address string ("Alice <a@x>, b@y") into the ContactOption[]
+ * the shared ContactPicker consumes. The email is the bare address; the chip label is the friendly
+ * name when the token carried one, otherwise the address itself (matching the picker's own free-text
+ * behaviour). This lets replies/forwards/drafts — which persist addresses as plain strings — hydrate
+ * the picker without a separate data path.
+ */
+export function parseRecipients(s: string): ContactOption[] {
+  return splitAddrs(s).map((token) => {
+    const email = bareAddress(token);
+    const named = /<[^>]+>/.test(token) ? displayName(token) : '';
+    return { email, displayName: named || email };
+  });
 }
 
 export function quote(text: string): string {

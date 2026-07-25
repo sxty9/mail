@@ -415,11 +415,16 @@ func uniqueName() string {
 
 // Deliver writes data into the user's folder. seen=false drops it in new/ (unread);
 // seen=true stores it in cur/ already-Seen (used for the sender's Sent copy). Returns the
-// message id (the maildir base name).
+// message id (the maildir base name). It holds the store lock for the whole delivery — the
+// same critical section as the other tree mutations — so a delivery can never interleave with a
+// folder rename/delete (which would otherwise let a just-delivered message be RemoveAll'd, or
+// resurrect a folder mid-deletion) and no reader observes a half-created maildir.
 func (s *Store) Deliver(user, folder string, data []byte, seen bool) (string, error) {
 	if err := s.EnsureUser(user); err != nil {
 		return "", err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	fdir := folderDir(s.userRoot(user), folder)
 	if err := ensureMaildir(fdir); err != nil {
 		return "", err

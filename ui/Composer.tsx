@@ -21,13 +21,7 @@ import {
   type ServiceUiBridge,
 } from '@holistic/ui';
 import type { AttachmentView, SendResult } from './types';
-import { fileToBase64, formatSize, splitAddrs } from './helpers';
-
-// Seed the recipient pickers from a comma/semicolon-separated address string (replies, drafts): each
-// address becomes an email-only chip that the picker enriches (name + avatar) when re-picked.
-function toOptions(s: string): ContactOption[] {
-  return splitAddrs(s).map((email) => ({ email, displayName: email }));
-}
+import { fileToBase64, formatSize, parseRecipients } from './helpers';
 
 export interface ComposeState {
   from?: string;
@@ -55,10 +49,10 @@ export interface ComposerProps {
   ui: ServiceUiBridge;
   state: ComposeState;
   addresses: string[];
-  /** Directory search backing the recipient pickers (wired to contax by the host). */
-  searchRecipients: (query: string) => Promise<ContactOption[]>;
-  /** Expand a selected contax group into member addresses (wired to contax by the host). */
-  onExpandGroup?: (groupId: string) => Promise<ContactOption[]>;
+  /** Directory type-ahead for To/Cc/Bcc — the contax lookup (see MailApp). */
+  searchContacts: (query: string) => Promise<ContactOption[]>;
+  /** Expand a picked contax personal group into its member addresses. */
+  expandGroup?: (groupId: string) => Promise<ContactOption[]>;
   onClose: () => void;
   onSent: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -74,15 +68,15 @@ export interface ComposerProps {
  * away auto-saves (via the imperative handle), sending removes the draft, and discarding deletes it.
  */
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { api, ui, state, addresses, searchRecipients, onExpandGroup, onClose, onSent, onDirtyChange, onExpand, expanded, className },
+  { api, ui, state, addresses, searchContacts, expandGroup, onClose, onSent, onDirtyChange, onExpand, expanded, className },
   ref,
 ) {
   const [from, setFrom] = useState(state.from || addresses[0] || '');
-  const [to, setTo] = useState<ContactOption[]>(() => toOptions(state.to));
-  const [cc, setCc] = useState<ContactOption[]>(() => toOptions(state.cc));
-  const [bcc, setBcc] = useState<ContactOption[]>(() => toOptions(state.bcc));
-  const [showCc, setShowCc] = useState(!!state.cc);
-  const [showBcc, setShowBcc] = useState(!!state.bcc);
+  const [to, setTo] = useState<ContactOption[]>(() => parseRecipients(state.to));
+  const [cc, setCc] = useState<ContactOption[]>(() => parseRecipients(state.cc));
+  const [bcc, setBcc] = useState<ContactOption[]>(() => parseRecipients(state.bcc));
+  const [showCc, setShowCc] = useState(cc.length > 0);
+  const [showBcc, setShowBcc] = useState(bcc.length > 0);
   const [subject, setSubject] = useState(state.subject);
   const [html, setHtml] = useState(state.html);
   const [text, setText] = useState(state.text);
@@ -102,9 +96,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   function payload() {
     return {
       from: from || undefined,
-      to: to.map((o) => o.email),
-      cc: cc.map((o) => o.email),
-      bcc: bcc.map((o) => o.email),
+      to: to.map((c) => c.email),
+      cc: cc.map((c) => c.email),
+      bcc: bcc.map((c) => c.email),
       subject,
       body: text,
       htmlBody: html,
@@ -226,36 +220,42 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </Text>
           )}
         </Stack>
-        <Stack direction="row" align="center" gap={2}>
-          <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
+        <Stack direction="row" align="start" gap={2}>
+          <Text variant="footnote" color="tertiary" className="w-12 shrink-0 pt-2">
             To
           </Text>
-          <ContactPicker value={to} onChange={setTo} onSearch={searchRecipients} onExpandGroup={onExpandGroup} placeholder="Name oder Adresse …" className="flex-1" />
+          <Box className="min-w-0 flex-1">
+            <ContactPicker value={to} onChange={setTo} onSearch={searchContacts} onExpandGroup={expandGroup} placeholder="Name or address …" />
+          </Box>
           {!showCc && (
-            <Button variant="ghost" size="sm" onClick={() => setShowCc(true)}>
+            <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowCc(true)}>
               Cc
             </Button>
           )}
           {!showBcc && (
-            <Button variant="ghost" size="sm" onClick={() => setShowBcc(true)}>
+            <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowBcc(true)}>
               Bcc
             </Button>
           )}
         </Stack>
         {showCc && (
-          <Stack direction="row" align="center" gap={2}>
-            <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
+          <Stack direction="row" align="start" gap={2}>
+            <Text variant="footnote" color="tertiary" className="w-12 shrink-0 pt-2">
               Cc
             </Text>
-            <ContactPicker value={cc} onChange={setCc} onSearch={searchRecipients} onExpandGroup={onExpandGroup} placeholder="Name oder Adresse …" className="flex-1" />
+            <Box className="min-w-0 flex-1">
+              <ContactPicker value={cc} onChange={setCc} onSearch={searchContacts} onExpandGroup={expandGroup} placeholder="Name or address …" />
+            </Box>
           </Stack>
         )}
         {showBcc && (
-          <Stack direction="row" align="center" gap={2}>
-            <Text variant="footnote" color="tertiary" className="w-12 shrink-0">
+          <Stack direction="row" align="start" gap={2}>
+            <Text variant="footnote" color="tertiary" className="w-12 shrink-0 pt-2">
               Bcc
             </Text>
-            <ContactPicker value={bcc} onChange={setBcc} onSearch={searchRecipients} onExpandGroup={onExpandGroup} placeholder="Verborgene Empfänger …" className="flex-1" />
+            <Box className="min-w-0 flex-1">
+              <ContactPicker value={bcc} onChange={setBcc} onSearch={searchContacts} onExpandGroup={expandGroup} placeholder="Name or address …" />
+            </Box>
           </Stack>
         )}
         <Stack direction="row" align="center" gap={2}>
