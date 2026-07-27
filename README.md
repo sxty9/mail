@@ -3,7 +3,7 @@
 The **mail service** for the Holistic ecosystem. Every Holistic user (a Linux account — the
 single source of truth) automatically has the address `<username>@<mailDomain>`, where
 `mailDomain` is the canonical domain owned by the dashboard (`GET /api/instance`). A Go daemon
-stores mail in per-user **Maildirs** and serves an HTTP/JMAP-style API; a `@holistic/ui` plugin
+stores mail in per-user **Maildirs** and serves an HTTP/JMAP-style API; a `@holisdk/ui` plugin
 is the web client.
 
 ```
@@ -41,7 +41,7 @@ HTTP/JMAP-native:
 ## Prerequisites
 
 The [holistic](https://github.com/sxty9/holistic) repo must be present **as a sibling**
-(`../holistic`) with the dashboard installed — it provides the `@holistic/ui` SDK + the SPA, the
+(`../holistic`) with the dashboard installed — it provides the `@holisdk/ui` SDK + the SPA, the
 shared JWT secret and `/var/lib/holistic/instance.json`.
 
 ## Quickstart
@@ -106,7 +106,7 @@ ln -sfn "$PWD/ui" ../holistic/frontend/external/mail
 ( cd ../holistic/frontend && pnpm --filter @holistic/app dev )   # http://localhost:5173
 ```
 
-UI imports are restricted to `@holistic/ui` + `react` (enforced by holistic's `eslint.services.cjs`).
+UI imports are restricted to `@holisdk/ui` + `react` (enforced by holistic's `eslint.services.cjs`).
 
 ## Layout
 
@@ -123,7 +123,7 @@ backend/                      Go daemon (maild)
   internal/instance/            reads the canonical mail domain (read-only)
   internal/lda/                 local delivery + external-vs-local routing
   internal/outbound/            disk-backed spool → sxgate edge
-ui/                           @holistic/ui plugin (MailApp): inbox · reading sheet · compose
+ui/                           @holisdk/ui plugin (MailApp): inbox · reading sheet · compose
 ```
 
 ## License

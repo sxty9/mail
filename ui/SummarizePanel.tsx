@@ -13,7 +13,7 @@ import {
   XIcon,
   type ServiceApiClient,
   type ServiceUiBridge,
-} from '@holistic/ui';
+} from '@holisdk/ui';
 import type { MessageFull } from './types';
 
 // The "Summarize with AI" panel that drops in under the reading-pane toolbar. It hands the open
@@ -21,7 +21,7 @@ import type { MessageFull } from './types';
 // the Markdown summary it returns.
 //
 // The aigentic /run contract is mirrored locally rather than imported: the mail UI may depend only
-// on @holistic/ui and react (holistic's import allowlist), never on the aigentic package. We post a
+// on @holisdk/ui and react (holistic's import allowlist), never on the aigentic package. We post a
 // single text prompt; the caller supplies the engine `kind` it's entitled to (see ReadingPane —
 // 'choose' for users with the paid right, else the non-metered 'claude-cli'). See aigentic
 // ui/types.ts for the shared shapes and ui/AskAiFilePanel.tsx for the reference call.

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-`maild` — the **holistic mail service**. Go daemon + `@holistic/ui` plugin. The SDK is **consumed
+`maild` — the **holistic mail service**. Go daemon + `@holisdk/ui` plugin. The SDK is **consumed
 only** (never vendored). Built from `holistic-service-template`; see the root `CLAUDE.MD` for the
 ecosystem maxims this must obey.
 
@@ -26,7 +26,7 @@ to the public internet, it only exposes an inbound webhook and an outbound spool
 - `backend/internal/lda/` — local delivery + local-vs-external routing.
 - `backend/internal/outbound/` — disk-backed spool that hands messages to the sxgate edge.
 - `ui/index.tsx` — default-exports the `ServicePlugin` (`id: 'mail'`).
-- `ui/MailApp.tsx` — the plugin UI (inbox list · reading Sheet · compose Modal); renders only `@holistic/ui`.
+- `ui/MailApp.tsx` — the plugin UI (inbox list · reading Sheet · compose Modal); renders only `@holisdk/ui`.
 
 ## Rules
 
@@ -35,7 +35,7 @@ to the public internet, it only exposes an inbound webhook and an outbound spool
 - Never invent identity or the mail domain — Linux accounts + `instance.json` are authoritative.
 - External transport belongs to sxgate. Do not add an SMTP/IMAP listener to `maild` without
   revisiting the architecture (Maildir keeps a future LAN Dovecot-IMAP layer open).
-- UI may import only `@holistic/ui` and `react` (holistic's `eslint.services.cjs` enforces it).
+- UI may import only `@holisdk/ui` and `react` (holistic's `eslint.services.cjs` enforces it).
 - Daemon runs unprivileged. The systemd unit must keep `ReadWritePaths=/var/lib/mail` (writes mail).
 
 ## Edge contract (sxgate ⇄ maild)

@@ -21,16 +21,17 @@ import {
   Stack,
   Text,
   TrashIcon,
+  formatBytes,
   userHasRight,
   type FileEntry,
-  type HolisticUser,
   type MenuItem,
+  type SessionUser,
   type ServiceApiClient,
   type ServiceUiBridge,
   type TextPayload,
-} from '@holistic/ui';
+} from '@holisdk/ui';
 import type { AttachmentView, FolderInfo, MessageFull } from './types';
-import { attachmentEntry, displayName, downloadAttachment, folderLabel, formatFull, formatSize } from './helpers';
+import { attachmentEntry, displayName, downloadAttachment, folderLabel, formatFull } from './helpers';
 import { SummarizePanel } from './SummarizePanel';
 
 export function ReadingPane({
@@ -54,7 +55,7 @@ export function ReadingPane({
   // FilePreview can offer aigentic's "Ask AI" on an attachment (aigentic reaches its own backend).
   apiFor: (serviceId: string) => ServiceApiClient;
   ui: ServiceUiBridge;
-  user: HolisticUser;
+  user: SessionUser;
   openService: (serviceId: string, subPath?: string) => void;
   folder: string;
   id: string | null;
@@ -286,7 +287,7 @@ export function ReadingPane({
                       {a.filename || `attachment-${a.index}`}
                     </Text>
                     <Text variant="caption" color="tertiary">
-                      {formatSize(a.size)}
+                      {formatBytes(a.size)}
                     </Text>
                   </Stack>
                   <IconButton

@@ -1,6 +1,6 @@
 // Pure helpers shared across the mail UI. No JSX here — only data/string utilities and the
 // binary-download flow (which goes through props.api.raw, never fetch).
-import type { ContactOption, FileEntry, ServiceApiClient, ViewerKind } from '@holistic/ui';
+import type { ContactOption, FileEntry, ServiceApiClient, ViewerKind } from '@holisdk/ui';
 import type { AttachmentView, MessageFull, OutAttachment } from './types';
 
 /** Friendly name from a "Name <addr>" or bare address. */
@@ -128,13 +128,6 @@ export function forwardDefaults(m: MessageFull): { html: string; text: string } 
   const body = escapeHtml(m.text || '').replace(/\r?\n/g, '<br>');
   const html = `<p><br></p><p>${htmlHead}</p><p>${body}</p>`;
   return { html, text };
-}
-
-/** Human-readable byte size. */
-export function formatSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** Read a File into a base64 string (no data: prefix) for the compose payload. */

@@ -13,7 +13,7 @@ import {
   type InstanceInfo,
   type ServiceApiClient,
   type ServiceUiBridge,
-} from '@holistic/ui';
+} from '@holisdk/ui';
 import type { AppPasswordCreated, AppPasswordsResp } from './types';
 
 export function AppPasswordsModal({

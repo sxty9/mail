@@ -15,13 +15,14 @@ import {
   Text,
   UploadControl,
   XIcon,
+  formatBytes,
   type ContactOption,
   type MenuItem,
   type ServiceApiClient,
   type ServiceUiBridge,
-} from '@holistic/ui';
+} from '@holisdk/ui';
 import type { AttachmentView, SendResult } from './types';
-import { fileToBase64, formatSize, parseRecipients } from './helpers';
+import { fileToBase64, parseRecipients } from './helpers';
 
 export interface ComposeState {
   from?: string;
@@ -296,7 +297,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     {a.filename || `attachment-${a.index}`}
                   </Text>
                   <Text variant="caption" color="tertiary">
-                    {formatSize(a.size)}
+                    {formatBytes(a.size)}
                   </Text>
                 </Stack>
                 <IconButton
@@ -323,7 +324,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     {f.name}
                   </Text>
                   <Text variant="caption" color="tertiary">
-                    {formatSize(f.size)}
+                    {formatBytes(f.size)}
                   </Text>
                 </Stack>
                 <IconButton

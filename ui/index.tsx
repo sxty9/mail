@@ -1,4 +1,4 @@
-import { MailIcon, type ServicePlugin } from '@holistic/ui';
+import { MailIcon, type ServicePlugin } from '@holisdk/ui';
 import { MailApp } from './MailApp';
 
 // The mail service's dashboard plugin. Linked into holistic/frontend/external/mail at install

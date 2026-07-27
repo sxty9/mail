@@ -23,7 +23,7 @@ import {
   type ServiceUiBridge,
   type TreeNavNode,
   type TreeNavPosition,
-} from '@holistic/ui';
+} from '@holisdk/ui';
 import type { FolderInfo } from './types';
 import { folderDepth, folderLeaf, folderParent, isInSubtree } from './helpers';
 
