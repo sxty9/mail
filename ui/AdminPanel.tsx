@@ -16,7 +16,7 @@ import {
   useLiveQuery,
   type ServiceApiClient,
   type ServiceUiBridge,
-} from '@holistic/ui';
+} from '@holisdk/ui';
 import type { AliasesResp, DomainsResp } from './types';
 
 export function AdminPanel({

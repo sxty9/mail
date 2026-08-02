@@ -1,4 +1,4 @@
-import { Avatar, Badge, Box, ContextMenu, EmptyState, FileIcon, MailIcon, Stack, Text, type MenuItem } from '@holistic/ui';
+import { Avatar, Badge, Box, ContextMenu, EmptyState, FileIcon, MailIcon, Stack, Text, type MenuItem } from '@holisdk/ui';
 import type { MessageMeta } from './types';
 import { displayName, formatWhen } from './helpers';
 

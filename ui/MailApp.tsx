@@ -29,7 +29,7 @@ import {
   type MenuItem,
   type ServiceApiClient,
   type ServiceContextProps,
-} from '@holistic/ui';
+} from '@holisdk/ui';
 import type { Info, MailboxesResp, MessageFull, MessageMeta, MessagesResp } from './types';
 import { bareAddress, folderLabel, forwardDefaults, replyDefaults } from './helpers';
 import { FolderSidebar } from './FolderSidebar';
